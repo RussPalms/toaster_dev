@@ -1,6 +1,6 @@
 // Background visuals: ASCII field (spectrum + kick ripples, code rain, oscilloscope), a
 // wireframe tunnel like the Hardcore Software visualizers, Strudel-style floating punchcard
-// blocks, and the webcam tinted to the theme like DJ_Dave's streams.
+// blocks, and the webcam tinted to the theme.
 import { VOICES } from './engine.js';
 
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));

@@ -1,6 +1,6 @@
 // Big eyes: little windows over your face, each with one feature blown up in place: your eyes
 // (far too big for your head) and your mouth, swelling on the kick. After the segcam effect
-// lo.fi.sci.fi made for DJ_Dave's videos. Placed with MediaPipe's face landmarks (see
+// lo.fi.sci.fi made. Placed with MediaPipe's face landmarks (see
 // tracking.js); points used: iris centres 468 and 473, eye corners 33/133 and 362/263, mouth
 // corners 61/291 and lips 13/14.
 // size: how much around the feature each window shows (times the feature's width); zoom: how
@@ -10,7 +10,7 @@
 // pop open wherever something moves, each showing what was there the moment it opened, so moving
 // leaves a trail of them; they close again after a second or so, and a burst opens on each kick.
 // One stays on your face, live. Also after segcam (its motion windows and trail length), and the
-// windows DJ_Dave's GIVE IT 2 ME video cuts her into.
+// windows a music video cuts its singer into.
 // With the camera as text (the ASCII camera, C) the windows show you as text too, each window the
 // theme turned over (its text colour, the characters in the background's), so its text never
 // matches the text around it, under a title bar in the ID card's panel colour: you're only there

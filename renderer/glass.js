@@ -1,5 +1,5 @@
 // The glass blob: a lump of liquid glass floating over the code and bending it like a lens, after
-// the visuals null.mpeg made for DJ_Dave's AIRGLOW. Each frame the background is drawn into a
+// null.mpeg's AIRGLOW visuals. Each frame the background is drawn into a
 // picture, the code goes over it, and a WebGL shader shows that through the blob: bent toward the
 // middle (so what's under it looks bigger, like through a drop of water), split slightly into
 // colours toward the edge, with the theme's light catching the rim, a soap bubble's colours in it,

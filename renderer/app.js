@@ -649,7 +649,7 @@ function sizeCard() {
 new ResizeObserver(sizeCard).observe($('card'));
 addEventListener('resize', sizeCard);
 
-// In the vertical layout the camera sits in the top part of the frame, like DJ_Dave's shorts.
+// In the vertical layout the camera sits in the top part of the frame.
 const camRect = () => (state.vertical ? { x: 0, y: 0, w: innerWidth, h: Math.round(innerHeight * 0.42) } : null);
 
 // The pitch wheel and the spiral are diagrams: behind the code they're lost. In the vertical layout

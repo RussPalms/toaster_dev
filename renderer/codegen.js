@@ -1,5 +1,5 @@
-// Writes what the engine hears as Strudel code, in DJ_Dave's style: named lines (kick:, clap:,
-// hhc:, hho:, bassline:, chords:, vox:), mini-notation with ! for repeats, and knob numbers.
+// Writes what the engine hears as Strudel code, the way it's performed live: named lines (kick:,
+// clap:, hhc:, hho:, bassline:, chords:, vox:), mini-notation with ! for repeats, and knob numbers.
 // Every line is a list of parts; a part that plays steps (or bars) knows which, for highlighting.
 import { NOTES } from './engine.js';
 
@@ -43,7 +43,7 @@ export function stepParts(tok) {
   return parts;
 }
 
-// Four bars of values as <a b c d>, writing repeats with ! (<e2!2 c2 d2>), the way DJ_Dave does.
+// Four bars of values as <a b c d>, writing repeats with ! (<e2!2 c2 d2>), the way live coders do.
 function slotParts(values) {
   if (!values.some(Boolean)) return null;
   if (values.every((x) => x === values[0])) return [{ text: values[0], slots: [0, 1, 2, 3] }];
@@ -136,7 +136,7 @@ export function buildLines(eng, meta, t) {
       lastBody[id] = body.map((p) => p.text).join('');
       out[id] = [{ text: `${d.label}: s("` }, ...body, { text: '")' + d.tail(k, eng) }];
     } else {
-      // stopped: muted the way DJ_Dave does it, a _ in front of the name (Strudel's mute); never
+      // stopped: muted the live-coding way, a _ in front of the name (Strudel's mute); never
       // heard yet: a commented-out placeholder
       const text = `${d.label}: s("${lastBody[id] || d.token}")` + d.tail(k, eng);
       out[id] = plain(lastBody[id] ? '_' + text : '// ' + text);
@@ -208,7 +208,7 @@ export function strudelProgram(texts, song) {
     }
     out.push(line);
   }
-  out.push('', "// everything that's playing as a punchcard under the code, like DJ_Dave's streams", 'all(x => x._punchcard())');
+  out.push('', "// everything that's playing as a punchcard under the code", 'all(x => x._punchcard())');
   return out.join('\n') + '\n';
 }
 
