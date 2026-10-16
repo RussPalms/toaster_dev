@@ -1,0 +1,1181 @@
+// Toaster: wires the audio sources, the listening engine, the code view and the visuals.
+import { createEngine, NOTES, nowSec, ROLL_COLS } from './engine.js';
+import { buildLines, LINE_IDS, resetCodegen, strudelProgram, strudelLink } from './codegen.js';
+import { createCodeView } from './codeview.js';
+import { createField, createTunnel, createPunchcard, createWebcam, rgbOf, bands, RAMP } from './visuals.js';
+import { createOrb } from './orb.js';
+import { createTakeover, createSysinfo, showBsod, xpAlert } from './fx.js';
+import { createCard } from './card.js';
+import { createGlass } from './glass.js';
+import { createTracker } from './tracking.js';
+import { createLens } from './lens.js';
+import { createSegcam } from './segcam.js';
+import { createGestures } from './gestures.js';
+import { createSpiral, createWheel } from './rings.js';
+import { createWarp } from './warp.js';
+import { createWorlds } from './worlds.js';
+import { createCuts } from './cuts.js';
+import { createTape, songMidi, songStrudel } from './tape.js';
+import { createClips } from './clips.js';
+import { makeDemo } from './demo.js';
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+const VISUALS = ['spectrum', 'tunnel', 'spiral', 'pitchwheel', 'warp', 'cuts', 'worlds', 'rain', 'scope', 'off'];
+const ON_VIS = ['tunnel', 'spiral', 'pitchwheel', 'cuts']; // the backgrounds drawn on the #vis canvas
+const FIELD_VIS = ['spectrum', 'rain', 'scope']; // and the ones drawn as ASCII, on #field
+const THEMES = ['bluescreen', 'blackscreen', 'terminal', 'pink', 'whitescreen'];
+const DROPS = ['xp takeover', 'blue screen', 'off'];
+// The camera's effects (K): none, just you over the visuals, slit-scan, datamosh.
+const CAM_FX = ['none', 'cut-out', 'slit-scan', 'datamosh', 'windows'];
+// How strongly the ASCII background shows (A): a multiple of each theme's own strength (--field).
+const STRENGTHS = [['soft', 1], ['normal', 1.5], ['bold', 2.2]];
+
+// ---------------------------------------------------------------- audio
+
+const ac = new AudioContext({ latencyHint: 'interactive' });
+const analyser = (size) => {
+  const a = ac.createAnalyser();
+  a.fftSize = size;
+  a.smoothingTimeConstant = 0;
+  return a;
+};
+const fast = analyser(1024), mid = analyser(4096), slow = analyser(16384);
+const eng = createEngine({ fast, mid, slow, sampleRate: ac.sampleRate });
+eng.tape = createTape(); // the song as heard, for X
+const view = createCodeView(LINE_IDS);
+const field = createField($('field'));
+// the camera as text (C's fourth setting): a layer of its own, over whichever background is picked
+const asciiCam = createField($('asciicam'));
+const tunnel = createTunnel($('vis'));
+const spiral = createSpiral($('vis')), wheel = createWheel($('vis')); // on the tunnel's canvas
+const warp = createWarp($('warp'));
+const worlds = createWorlds($('worlds'), $('worldwords'));
+const cuts = createCuts($('vis')); // on the tunnel's canvas too
+const punch = createPunchcard($('punch')); // its own layer, so it can sit on top of any background
+const cam = createWebcam($('cam'));
+const tracker = createTracker(); // hands and face, while the camera is on
+const takeover = createTakeover({
+  back: $('desk-back'), front: $('desk-front'),
+  sources: { cam: () => cam.on, face: () => meshFace() || cam.face, crop: (r, out, w, h) => cam.drawCrop(r, out, w, h) },
+});
+const sys = createSysinfo($('sys'), () => describeAudio());
+const card = createCard($('card'));
+const glass = createGlass($('glass'), $('code'));
+const orb = createOrb($('orb'));
+const LAYERS = ['cam', 'worlds', 'worldwords', 'vis', 'warp', 'field', 'asciicam', 'orb', 'punch'].map($); // the background canvases, bottom first, for the glass
+const lens = createLens($('lens')); // the finger frame
+const segcam = createSegcam($('segcam')); // big eyes
+const gestures = createGestures(); // hand signs: theme, record, hush
+
+// The face for the close-ups and the card: from MediaPipe's face landmarks when they're being
+// tracked (exact), else Windows' face box and the eye finder (visuals.js). Shaped like Windows' box
+// (from just above the eyebrows to just under the mouth), which the close-ups are framed for.
+function meshFace() {
+  const f = tracker.face;
+  if (!f || !cam.on) return null;
+  const at = (i) => cam.toPicture(f[i][0], f[i][1]);
+  const xs = [234, 454].map((i) => at(i)[0]), cx = (xs[0] + xs[1]) / 2, w = Math.abs(xs[1] - xs[0]) * 0.84;
+  const brow = Math.min(...[70, 63, 105, 66, 107, 336, 296, 334, 293, 300].map((i) => at(i)[1])), lip = at(17)[1], span = lip - brow;
+  const eyes = [468, 473].map(at).sort((a, b) => a[0] - b[0]);
+  return { x: cx - w / 2, y: brow - span * 0.1, w, h: span * 1.15, eyes, sure: 999 };
+}
+
+const state = {
+  source: null, label: '', node: null, stream: null, el: null, demo: null,
+  winSong: null, winKey: '', manual: null,
+  visual: 0, strength: 1, blocks: true, orb: false, theme: 0, drop: 0, info: false, vertical: false, glass: false,
+  mini: false, // the mini player (W): a small window over everything else
+  eyes: false, // the camera's third setting: big eyes over your face
+  ascii: false, // and its fourth: the camera as text, in place of the ASCII background
+  camFx: 0, // the camera's effect (K), in CAM_FX
+  worldLook: 'auto', // the worlds' look (A while they're on): auto, film, ascii, ink, risograph...
+  calm: false, // fewer flashes (the help's setting; on at first if Windows' animations are off)
+  firstRun: false, // nothing saved yet: this is the first time Toaster has opened
+  hushed: false, // every part muted and the picture dimmed (a raised fist, or Q)
+  card: false, cardV: true, // the ID card in the wide layout, and in the vertical one (on there unless you turn it off)
+  cardBig: false, // and big (N a second time): the same card as big as fits
+  syncTrim: 0, // your fine-tuning of the blocks' timing, in ms ([ and ] keys); see syncOffset()
+  keys: {}, // the keys you changed: action -> key (see ACTIONS)
+};
+let col = { bg: [5, 29, 181], fg: [255, 255, 255], ink: [2, 11, 69] };
+
+// The look you picked (background and its strength, blocks, orb, card, glass, theme, drop effect)
+// is remembered between launches. The camera always starts off.
+const SAVED = ['keys', 'strength', 'blocks', 'orb', 'card', 'cardV', 'cardBig', 'glass', 'theme', 'drop', 'syncTrim', 'camFx', 'calm', 'worldLook'];
+function loadSettings() {
+  let saved = {};
+  try {
+    const kept = localStorage.getItem('now-coding');
+    state.firstRun = kept === null;
+    saved = JSON.parse(kept || '{}');
+    for (const k of SAVED) if (k in saved) state[k] = saved[k];
+  } catch { /* first run, or storage unavailable */ }
+  // fewer flashes: as you set it, or (till you do) as Windows' "Show animations" says
+  if (typeof saved.calm !== 'boolean') state.calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  state.orb = state.orb === true;
+  // The background is saved by name (older versions saved its number in the list). The orb (and
+  // the scenes before it) used to be a background; if that's what was picked, it's the orb on its
+  // own: the orb on, the background off.
+  const name = typeof saved.visualName === 'string' ? saved.visualName : VISUALS[saved.visual];
+  if (name === 'orb' || name === 'scenes') { state.orb = true; state.visual = VISUALS.indexOf('off'); }
+  else state.visual = Math.max(0, VISUALS.indexOf(name));
+  if (!(state.theme in THEMES)) state.theme = 0;
+  if (!(state.drop in DROPS)) state.drop = 0;
+  if (!Number.isFinite(state.syncTrim)) state.syncTrim = 0;
+  if (!(state.strength in STRENGTHS)) state.strength = 1;
+  if (!(state.camFx in CAM_FX)) state.camFx = 0;
+  if (!worlds.looks.includes(state.worldLook)) state.worldLook = 'auto';
+  worlds.setLook(state.worldLook);
+  state.card = state.card === true;
+  state.cardV = state.cardV !== false;
+  state.cardBig = state.cardBig === true;
+  // the keys you changed: kept if they're single keys not taken twice
+  const keys = state.keys && typeof state.keys === 'object' ? state.keys : {};
+  state.keys = {};
+  const used = new Set();
+  for (const [id, k] of Object.entries(keys)) if (typeof k === 'string' && k && !used.has(k)) { state.keys[id] = k; used.add(k); }
+  state.glass = state.glass === true;
+}
+
+// How far ahead (seconds) to draw the blocks so they land when you hear the beat. The beat clock
+// follows the hits as the app detects them, which is about 14 ms after they reach it. When they
+// reach it, relative to your ears, depends on the source (measured with tools/checks.js):
+// system audio arrives about as the speakers play it (Windows' capture takes about as long as
+// the speakers do, ~53 ms round trip); the app's own playback (demo, files) is analysed about
+// 8 ms more than one output delay before the speakers play it; an input takes ~30 ms to capture.
+// A frame takes ~35 ms to reach the screen. Your [ / ] fine-tuning goes on top.
+// How long after the app gets a hit you hear it (ms): system audio about as it arrives, the demo
+// and files after the speakers' latency and a little more, a mic before (you hear the room).
+function heardAfter() {
+  const output = ac.outputLatency ? ac.outputLatency * 1000 : 40;
+  return state.source === 'system' ? 0 : state.source === 'input' ? -30 : output + 8;
+}
+function syncOffset() {
+  const display = 35, notice = 14;
+  return (display + notice - heardAfter() + state.syncTrim) / 1000;
+}
+function saveSettings() {
+  const out = Object.fromEntries(SAVED.map((k) => [k, state[k]]));
+  out.visualName = VISUALS[state.visual];
+  try { localStorage.setItem('now-coding', JSON.stringify(out)); } catch { /* ignore */ }
+}
+
+function detach() {
+  try { state.node?.disconnect(); } catch { /* already gone */ }
+  state.stream?.getTracks().forEach((t) => t.stop());
+  if (state.el) {
+    const src = state.el.src;
+    state.el.pause(); state.el.removeAttribute('src'); state.el.load();
+    if (src.startsWith('blob:')) URL.revokeObjectURL(src); // the file it played, let go
+  }
+  state.demo?.stop();
+  state.node = state.stream = state.el = state.demo = null;
+}
+
+function attach(node, source, label) {
+  node.connect(fast);
+  node.connect(mid);
+  node.connect(slow);
+  state.node = node;
+  state.source = source;
+  state.label = label;
+  tapRecording();
+  clips.retap();
+  // a file or the demo plays from its start; system audio and inputs may be halfway through a song
+  freshStart(source === 'file' || source === 'demo');
+  $('menu').hidden = true;
+  document.body.classList.add('live');
+  $('status').classList.add('on');
+  $('status').textContent = '● live';
+}
+
+// New source or new song: wipe the screen and start typing again from a blank window. top: the
+// song starts now, from its beginning (see listenOpening in engine.js).
+function freshStart(top = false) {
+  if (state.hushed) setHush(false); // a new song comes in unhushed
+  eng.reset({ top });
+  resetCodegen();
+  view.clear();
+  takeover.stop();
+  glitch();
+}
+
+// System audio: main.js answers this request with Windows loopback audio, so there's no picker.
+// Voice-call processing (echo cancelling, noise suppression, auto gain) is on by default. On music
+// it costs CPU and hurts: noise suppression squashes hats and claps, auto gain flattens the dynamics.
+const RAW_AUDIO = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+
+// Each pick of a source takes a ticket: one still opening when another is picked (system audio
+// can take a moment) gives up when it's ready, letting go of what it opened, instead of taking
+// over from the one you picked after it.
+let picking = 0;
+const outdated = (ticket) => ticket !== picking;
+
+async function useSystem() {
+  const ticket = ++picking;
+  await ac.resume();
+  const stream = await navigator.mediaDevices.getDisplayMedia({ audio: RAW_AUDIO, video: true });
+  const track = stream.getAudioTracks()[0];
+  if (!track || outdated(ticket)) {
+    stream.getTracks().forEach((t) => t.stop());
+    if (!track && !outdated(ticket)) throw new Error('Windows did not hand over any audio.');
+    return;
+  }
+  await track.applyConstraints(RAW_AUDIO).catch(() => {}); // in case the first request was ignored
+  stream.getVideoTracks().forEach((t) => t.stop()); // only the sound is needed
+  if (outdated(ticket)) { track.stop(); return; }
+  detach();
+  state.stream = stream;
+  track.addEventListener('ended', () => { if (state.stream === stream) showMenu('System audio stopped. Pick a source.', 'warning'); });
+  attach(ac.createMediaStreamSource(new MediaStream([track])), 'system', 'system audio');
+}
+
+async function useDemo() {
+  const ticket = ++picking;
+  await ac.resume();
+  if (outdated(ticket)) return;
+  detach();
+  state.demo = makeDemo(ac);
+  attach(state.demo.out, 'demo', 'demo beat');
+}
+
+async function useFile(file) {
+  const ticket = ++picking;
+  await ac.resume();
+  if (outdated(ticket)) return;
+  detach();
+  const el = new Audio(URL.createObjectURL(file));
+  el.loop = true;
+  const node = ac.createMediaElementSource(el);
+  node.connect(ac.destination);
+  state.el = el;
+  attach(node, 'file', file.name);
+  await el.play();
+}
+
+async function chooseInput() {
+  let probe;
+  try {
+    probe = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    throw new Error('Allow microphone access so the inputs can be listed.');
+  }
+  const inputs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput');
+  probe.getTracks().forEach((t) => t.stop());
+  const list = $('device-list');
+  list.innerHTML = '';
+  for (const d of inputs) {
+    const b = document.createElement('button');
+    b.textContent = d.label || 'input ' + d.deviceId.slice(0, 6);
+    b.onclick = () => { $('devices').close(); useInput(d.deviceId, d.label).catch(showError); };
+    list.append(b);
+  }
+  if (!inputs.length) list.textContent = 'No audio inputs found.';
+  $('devices').showModal();
+}
+
+async function useInput(deviceId, label) {
+  const ticket = ++picking;
+  await ac.resume();
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId }, ...RAW_AUDIO } });
+  if (outdated(ticket)) { stream.getTracks().forEach((t) => t.stop()); return; }
+  detach();
+  state.stream = stream;
+  attach(ac.createMediaStreamSource(stream), 'input', label || 'audio input');
+}
+
+function describeAudio() {
+  const rate = `${ac.sampleRate / 1000} kHz`;
+  return state.source === 'system' ? `system loopback · ${rate}` : `${state.label || 'none'} · ${rate}`;
+}
+
+// The source menu, with an optional message shown as an XP message box on top.
+function showMenu(msg = '', icon = 'error') {
+  $('menu').hidden = false;
+  if (msg) xpAlert($('alerts'), { title: 'toaster.exe', icon, text: msg });
+}
+function showError(err) {
+  showMenu(String(err?.message || err));
+}
+
+// ---------------------------------------------------------------- what's playing
+
+// Where the code is on screen (its lines' text and the panels between them), for the worlds to
+// keep their words clear of it. Measured only when they cut to a new world.
+function codeBox() {
+  let top = Infinity, bottom = -Infinity, right = 0, lines = -Infinity;
+  const panels = [];
+  for (const el of document.querySelectorAll('#code .ln .txt, #code .panel')) {
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) continue;
+    top = Math.min(top, r.top);
+    bottom = Math.max(bottom, r.bottom);
+    right = Math.max(right, r.right);
+    if (el.classList.contains('panel')) panels.push(r);
+    else lines = Math.max(lines, r.bottom);
+  }
+  if (!Number.isFinite(top)) return null;
+  // how far right the panels reach that hang below the last line (the chords' roll)
+  const panelRight = Math.max(0, ...panels.filter((r) => r.bottom > lines).map((r) => r.right));
+  return { top, bottom, right, lines: Number.isFinite(lines) ? lines : top, panelRight };
+}
+
+// Each code line's text as it is now (or is being typed toward), by line id.
+const lineTexts = () => Object.fromEntries(LINE_IDS.map((id) => [id, view.lines[id].target || view.lines[id].shown]));
+
+function currentSong() {
+  if (state.manual) return state.manual;
+  if (state.source === 'system') return state.winSong;
+  if (state.source === 'demo') return { title: 'demo_beat', artist: 'Toaster' };
+  if (state.source === 'file') return { title: state.label.replace(/\.[^.]+$/, ''), artist: 'File' };
+  return null;
+}
+
+// The song's cover from Windows (a small image, for the ID card), decoded once a cover. Not an
+// app's icon: a browser playing a song hands Windows its own icon (Chrome's) until the song's
+// cover arrives, and an icon has see-through corners, which a cover (a JPEG, or a square PNG)
+// doesn't; till the cover comes, the card shows the camera or the sound.
+let artSrc = '', artImg = null;
+function isIcon(im) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 16;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(im, 0, 0, 16, 16);
+  const d = g.getImageData(0, 0, 16, 16).data, alpha = (x, y) => d[(y * 16 + x) * 4 + 3];
+  return [alpha(0, 0), alpha(15, 0), alpha(0, 15), alpha(15, 15)].filter((a) => a < 128).length >= 3;
+}
+window.nc?.onNowPlaying((info) => {
+  if ((info?.art || '') !== artSrc) {
+    artSrc = info?.art || '';
+    artImg = null;
+    if (artSrc) { const im = new Image(); im.onload = () => { if (im.src === artSrc && !isIcon(im)) artImg = im; }; im.src = artSrc; }
+  }
+  const song = info?.title ? { title: info.title, artist: info.artist || '', app: (info.app || '').replace(/\.exe$/i, '') } : null;
+  state.winSong = song;
+  state.winPlaying = !!info?.playing;
+  // A new song on the system: start over, the way the code gets rewritten for each track. Only a
+  // different title counts: a reading without one (between tracks, or a hiccup) or an artist that
+  // fills in late is still the same song.
+  const key = song ? song.title.trim().toLowerCase() : '';
+  if (!key || key === state.winKey) return;
+  state.winKey = key;
+  const reset = state.source === 'system' && !state.manual && eng.tempo.locked;
+  eng.note(`now playing: ${song.title} | ${song.artist} (${info.app || '?'}, ${info.playing ? 'playing' : 'paused'})${reset ? ' -> reset' : ''}`);
+  if (reset) freshStart(true);
+});
+
+eng.on.kick = (s) => {
+  field.kick(s); spiral.kick(s); wheel.kick(s); glass.kick(s); segcam.kick(s); takeover.kick();
+  lens.kick(s, state.calm);
+  // the ones that punch the whole picture's light (the tunnel's flash, the warp, the camera's and
+  // the card's glitches) sit out with fewer flashes on
+  if (!state.calm) { tunnel.kick(s); warp.kick(s); cam.kick(s); card.kick(s); }
+  if (VISUALS[state.visual] === 'worlds') worlds.kick(s, nowSec(), state.calm, eng.tempo.P || 0.5);
+};
+// Drop clips: the first two drops of each song (the ones that matter, without a long night of
+// a song that keeps dropping filling the disk). Turning them on again starts the count over.
+let clipsThisSong = 0;
+eng.on.drop = () => {
+  if (clipsThisSong < 2 && clips.drop()) { clipsThisSong++; flashStatus('✂ clipping the drop…'); }
+  if (VISUALS[state.visual] === 'worlds') worlds.drop(nowSec(), eng.bar);
+  const mode = DROPS[state.drop];
+  // a bar's length in seconds; half a second a beat if the tempo isn't known yet
+  if (mode === 'xp takeover') takeover.start(nowSec(), currentSong()?.title, (eng.tempo.P || 0.5) * 4);
+  else if (mode === 'blue screen') showBsod($('bsod'), glitch);
+};
+eng.on.newSong = () => { resetCodegen(); view.clear(); takeover.stop(); glitch(); clipsThisSong = 0; };
+// A known song keeps its beat through breakdowns and quiet parts (see tempoUpdate in engine.js).
+eng.song = () => ({ known: !!currentSong(), playing: state.source === 'system' && !!state.winSong && !!state.winPlaying });
+
+// ---------------------------------------------------------------- look
+
+function glitch() {
+  document.body.classList.remove('glitch');
+  void document.body.offsetWidth;
+  document.body.classList.add('glitch');
+}
+
+function applyTheme() {
+  if (state.theme === 0) delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = THEMES[state.theme];
+  const cs = getComputedStyle(document.documentElement);
+  const get = (name) => cs.getPropertyValue(name).trim();
+  col = { bg: rgbOf(get('--bg')), fg: rgbOf(get('--fg')), ink: rgbOf(get('--ink')) };
+  window.nc?.setTitleBar(get('--bg'), get('--fg'));
+}
+
+function setVisual(i) {
+  state.visual = i;
+  const mode = VISUALS[i];
+  if (!FIELD_VIS.includes(mode)) field.clear();
+  for (const [name, v] of [['tunnel', tunnel], ['spiral', spiral], ['pitchwheel', wheel], ['warp', warp], ['cuts', cuts], ['worlds', worlds]]) if (mode !== name) v.clear();
+  $('b-visual').textContent = mode + ' ▾';
+  document.body.classList.toggle('worlds-on', mode === 'worlds');
+  applyStage();
+  saveSettings();
+}
+
+// Punchcard blocks: a layer of their own, on top of whichever background is picked.
+// The ASCII background's strength: soft is how it always was, normal (the default) half again as
+// strong, bold more than double. The code lines sit on their own bands, so they stay readable.
+// A, while the worlds are on: their look, in turn (auto: film, and on a drop another for 8 bars)
+function nextWorldLook() {
+  const all = worlds.looks;
+  state.worldLook = all[(all.indexOf(state.worldLook) + 1) % all.length];
+  worlds.setLook(state.worldLook);
+  flashStatus('look: ' + state.worldLook);
+  saveSettings();
+}
+function setStrength(i, say) {
+  state.strength = i;
+  document.documentElement.style.setProperty('--field-k', STRENGTHS[i][1]);
+  if (say) flashStatus('background: ' + STRENGTHS[i][0]);
+  saveSettings();
+}
+
+function setBlocks(on) {
+  state.blocks = on;
+  if (!on) punch.clear();
+  $('b-blocks').classList.toggle('on', on);
+  saveSettings();
+}
+
+// The dot orb: a layer of its own, like the blocks, so it goes over any background (or none).
+function setOrb(on) {
+  state.orb = on;
+  if (!on) orb.clear();
+  $('b-orb').classList.toggle('on', on);
+  saveSettings();
+}
+
+// Fewer flashes: the help's checkbox (see eng.on.kick, cuts, the takeover and body.calm in the CSS).
+function setCalm(on) {
+  state.calm = on;
+  document.body.classList.toggle('calm', on);
+  $('calm').checked = on;
+  saveSettings();
+}
+$('calm').addEventListener('change', (e) => setCalm(e.target.checked));
+
+// The glass blob: over the code, under the card and the pop-ups.
+function setGlass(on) {
+  state.glass = on;
+  glass.show(on);
+  $('b-glass').classList.toggle('on', on);
+  saveSettings();
+}
+
+// K: the camera's effect. The cut-out puts you over the visuals (the camera layer above them,
+// see-through round you); the others work on the picture as it is.
+// The camera button: filled while it's on, with its look past the plain one, and its effect (K)
+// if there is one.
+function camLabel() {
+  const look = state.eyes ? 'big eyes' : state.ascii ? 'ascii' : '', fx = CAM_FX[state.camFx];
+  $('b-cam').textContent = 'cam' + (cam.on && look ? ': ' + look : '') + (cam.on && fx !== 'none' ? ' · ' + fx : '');
+  $('b-cam').classList.toggle('on', cam.on);
+}
+
+function setCamFx(i, say) {
+  state.camFx = i;
+  cam.setFx(CAM_FX[i]);
+  if (CAM_FX[i] === 'windows') asciiCam.clear(); // (the camera as text shows in the windows instead)
+  document.body.classList.toggle('cam-cut', CAM_FX[i] === 'cut-out');
+  if (say) flashStatus('camera effect: ' + CAM_FX[i] + (cam.on ? '' : ` (${K('cam')} turns the camera on)`));
+  camLabel();
+  saveSettings();
+}
+
+function nextTheme() {
+  state.theme = (state.theme + 1) % THEMES.length;
+  applyTheme();
+  saveSettings();
+}
+
+// Hush (a raised fist, or Q): every part muted with a _, the way Strudel's hush() stops them all,
+// and the picture dimmed; an open hand (or Q again) brings it back, and so does a new song. The
+// status says so the whole time ("hush · Q"): set off by a fist in a video, the hush stayed on
+// after the camera went off, and the app just looked dull, every theme, with no sign why.
+function setHush(on) {
+  state.hushed = on;
+  document.body.classList.toggle('hushed', on);
+  flashStatus(on ? '✊ hush' : '🖐 back');
+}
+const restingStatus = () => (state.hushed ? `✊ hush · ${K('hush')}` : state.node ? '● live' : '○ idle');
+
+// Hand signs (gestures.js), while the camera is on: ✌️ the next theme, 👍 record, ✊ hush, 🖐 back.
+const SIGNS = { peace: '✌️', thumb: '👍', fist: '✊', open: '🖐' };
+let hinted = null;
+function watchSigns(t) {
+  const wanted = ['peace', 'thumb', state.hushed ? 'open' : 'fist'];
+  const sign = gestures.update(t, tracker.hands, cam.place, lens.showing, wanted);
+  // a hint in the header while one is held (hidden in a recording, like the rest of the header)
+  if (gestures.holding !== hinted) { hinted = gestures.holding; if (hinted) flashStatus(SIGNS[hinted] + ' …'); }
+  if (sign === 'peace') { nextTheme(); flashStatus('✌️ ' + THEMES[state.theme]); }
+  else if (sign === 'thumb') toggleRecording();
+  else if (sign === 'fist') setHush(true);
+  else if (sign === 'open') setHush(false);
+}
+
+// X: the song so far, decompiled: a MIDI file (drums, bass, chords, lead) and the whole song as
+// Strudel code (every 4 bars, the different ones named, in order with arrange()), into
+// Music\Toaster.
+async function exportSong() {
+  const song = eng.tape.song(eng.tempo.down);
+  if (!song) { flashStatus('nothing to export yet: no beat found'); return; }
+  const s = currentSong(), one = (x) => String(x || '').replace(/\s+/g, ' ').trim();
+  const name = s?.title ? `${s.artist ? one(s.artist) + ' - ' : ''}${one(s.title)}` : one(state.label) || 'song';
+  const about = s?.title ? `"${one(s.title)}"${s.artist ? ' by ' + one(s.artist) : ''}` : 'whatever was playing';
+  const midi = songMidi(song, name), code = songStrudel(song, about);
+  if (!window.nc?.saveSong) { flashStatus('exporting works in the app, not in a browser'); return; }
+  const file = await window.nc.saveSong(name, midi, code);
+  showNotice(`saved ${song.bars.length} bars as MIDI${code ? ' and Strudel code' : ''}: ${file.split(/[\\/]/).pop().replace(/\.mid$/, '')}`, file);
+}
+
+// O: the code as it is now, opened in the Strudel REPL in your browser, to play and change.
+function openInStrudel() {
+  const texts = lineTexts();
+  const url = strudelLink(strudelProgram(texts, currentSong()));
+  if (window.nc?.openStrudel) window.nc.openStrudel(url);
+  else window.open(url, '_blank', 'noopener');
+  flashStatus('opened in strudel.cc');
+}
+
+// What went wrong starting the camera, in words, with what to do about it.
+function cameraTrouble(err) {
+  const name = err?.name || '';
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') return `No camera found. Plug one in (or switch it on) and press ${K('cam')} again.`;
+  if (name === 'NotAllowedError' || name === 'SecurityError') return `The camera is blocked. In Windows Settings, Privacy, Camera, let desktop apps use the camera, then press ${K('cam')} again.`;
+  if (name === 'NotReadableError' || name === 'AbortError') return `The camera is busy: another app (Zoom, Teams, OBS...) is probably using it. Close that and press ${K('cam')} again.`;
+  return 'Camera: ' + (err?.message || err);
+}
+
+// The camera (C goes round): off, on (behind the code; frame something with your fingers for the
+// finger frame), on with big eyes over your face, and as text (ASCII), then off.
+async function toggleCam() {
+  if (!cam.on) {
+    try {
+      await cam.start();
+      if (cam.on) tracker.start();
+    } catch (err) { showMenu(cameraTrouble(err)); }
+  } else if (!state.eyes && !state.ascii) {
+    state.eyes = true;
+  } else if (state.eyes) {
+    state.eyes = false;
+    state.ascii = true;
+  } else {
+    state.ascii = false;
+    cam.stop();
+    tracker.stop();
+    lens.clear();
+    segcam.clear();
+    gestures.reset();
+  }
+  if (!state.eyes) segcam.clear();
+  if (!(cam.on && state.ascii)) asciiCam.clear();
+  document.body.classList.toggle('cam-on', cam.on);
+  document.body.classList.toggle('cam-ascii', cam.on && state.ascii);
+  camLabel();
+}
+
+async function toggleLayout() {
+  // not mid-recording: the window changes shape, and the video can't
+  if (rec.mr) { flashStatus(`the layout can't change while recording (${K('rec')} stops it)`); return; }
+  if (state.mini) await toggleMini(); // the full window back first
+  state.vertical = !state.vertical;
+  document.body.classList.toggle('vertical', state.vertical);
+  $('b-layout').textContent = state.vertical ? 'wide' : '9:16';
+  applyCard();
+  await window.nc?.setVertical(state.vertical);
+  // drop clips record the window's shape: start them again at the new one
+  if (clips.on) { await clips.toggle(); await new Promise((r) => setTimeout(r, 400)); await clips.toggle(); }
+}
+
+// The mini player (W), like Spotify's: the window shrinks to a small panel in the corner of the
+// screen, over everything else, still listening: the code over the background. W again (or its
+// button) brings the window back where it was.
+async function toggleMini() {
+  if (rec.mr) { flashStatus(`the window can't change size while recording (${K('rec')} stops it)`); return; }
+  if (!state.mini && state.vertical) await toggleLayout(); // from the wide layout
+  state.mini = !state.mini;
+  document.body.classList.toggle('mini', state.mini);
+  $('b-mini').textContent = state.mini ? 'back' : 'mini';
+  await window.nc?.setMini(state.mini);
+  // drop clips record the window's shape: start them again at the new one
+  if (clips.on) { await clips.toggle(); await new Promise((r) => setTimeout(r, 400)); await clips.toggle(); }
+}
+
+// The ID card has its own on/off for each layout: off in the wide one until you turn it on, on in
+// the vertical one (where it takes the camera's place at the top) until you turn it off.
+function applyCard() {
+  const on = state.vertical ? state.cardV : state.card, big = on && state.cardBig;
+  card.show(on);
+  document.body.classList.toggle('card-on', on);
+  document.body.classList.toggle('card-big', big);
+  sizeCard();
+  applyStage();
+  $('b-card').textContent = big ? 'big card' : 'card';
+  $('b-card').classList.toggle('on', on);
+}
+// N (or the card button): off, on, big, off. (Each layout keeps its own on or off; big is for both.)
+// In the mini player the card has one size, so N is just on and off there.
+function toggleCard() {
+  const on = state.vertical ? state.cardV : state.card, set = (v) => { if (state.vertical) state.cardV = v; else state.card = v; };
+  if (state.mini) set(!on);
+  else if (!on) { set(true); state.cardBig = false; }
+  else if (!state.cardBig) state.cardBig = true;
+  else { set(false); state.cardBig = false; }
+  applyCard();
+  saveSettings();
+}
+// The big card is the same card scaled up (a picture drawn pixelated stays sharp, and the text is
+// text): as big as fits on the right half of the wide layout (the code keeps the left), or the top
+// of the vertical one. The code starts below the card in the vertical layout, and stops short of it
+// in the wide one, however big it is. In the mini player it's scaled down to the panel's height.
+function sizeCard() {
+  const el = $('card'), w = el.offsetWidth, h = el.offsetHeight;
+  let k = 1;
+  if (state.mini && w && h) k = Math.min(1, (innerHeight - 44) / h);
+  else if (document.body.classList.contains('card-big') && w && h) {
+    k = state.vertical ? Math.min((innerWidth * 0.96) / w, (innerHeight * 0.62) / h) : Math.min((innerWidth * 0.5) / w, (innerHeight - 70) / h);
+    k = Math.max(1, k);
+  }
+  const s = document.body.style;
+  s.setProperty('--card-k', k.toFixed(3));
+  s.setProperty('--card-h', `${Math.round(h * k)}px`);
+  s.setProperty('--card-w', `${Math.round(w * k)}px`);
+}
+new ResizeObserver(sizeCard).observe($('card'));
+addEventListener('resize', sizeCard);
+
+// In the vertical layout the camera sits in the top part of the frame, like DJ_Dave's shorts.
+const camRect = () => (state.vertical ? { x: 0, y: 0, w: innerWidth, h: Math.round(innerHeight * 0.42) } : null);
+
+// The pitch wheel and the spiral are diagrams: behind the code they're lost. In the vertical layout
+// (without the card, which has the top) they get the top of the frame, as the camera does, and the
+// code moves down below them; with the camera on too, they're drawn over it there.
+const DIAGRAMS = ['pitchwheel', 'spiral'];
+function applyStage() {
+  document.body.classList.toggle('wheel-up', state.vertical && !card.shown && DIAGRAMS.includes(VISUALS[state.visual]));
+}
+const stageRect = () => (document.body.classList.contains('wheel-up') ? { x: 0, y: 40, w: innerWidth, h: Math.round(innerHeight * 0.42) - 40 } : null);
+
+// ---------------------------------------------------------------- panels
+
+// The grid changes about ten times a second (each step, each hit), so the page is only
+// touched when it actually changed. Returns the plain text for the Notepad pop-ups.
+const GRID_ROWS = [['bd', 'bd'], ['sd', 'cp'], ['hhc', 'hh'], ['hho', 'oh'], ['vox', 'vx']];
+let gridHtml = '', gridText = '';
+function renderGrid() {
+  const locked = eng.tempo.locked && eng.bar !== null && !eng.silent;
+  let html = '    ' + [1, 2, 3, 4].map((b) => String(b).padEnd(8)).join('') + '\n';
+  let text = html;
+  for (const [id, label] of GRID_ROWS) {
+    const v = eng.v[id], on = v.shown || v.on;
+    html += label + ' │';
+    text += label + ' │';
+    for (let s = 0; s < 16; s++) {
+      // █ hit on a step in the pattern · ▒ pattern step still to come · ░ hit off the pattern
+      const hit = locked && v.hitBar[s] === eng.bar;
+      let cell = '··';
+      if (locked && on[s]) cell = hit ? '██' : s > eng.step ? '▒▒' : '··';
+      else if (hit) cell = '░░';
+      html += locked && s === eng.step ? `<span class="cur">${cell}</span>` : cell;
+      text += cell;
+    }
+    html += '│\n';
+    text += '│\n';
+  }
+  const status = locked ? `    bar ${eng.bar + 1} · step ${eng.step + 1}/16` : '    waiting for the beat...';
+  html += `<span class="dim">${status}</span>`;
+  if (html !== gridHtml) {
+    gridHtml = html;
+    gridText = text + status;
+    $('grid').innerHTML = html;
+  }
+  return gridText;
+}
+
+function renderRoll() {
+  if (!eng.rollDirty) return;
+  eng.rollDirty = false;
+  const cols = eng.rollCols, chord = eng.lastChord;
+  const tones = chord ? [chord.root, (chord.root + chord.third) % 12, (chord.root + 7) % 12] : [];
+  let html = '';
+  for (let pc = 11; pc >= 0; pc--) {
+    const label = NOTES[pc].padEnd(2);
+    html += tones.includes(pc) ? `<span class="lab on">${label}</span>` : `<span class="lab">${label}</span>`;
+    let row = '';
+    for (let i = 0; i < ROLL_COLS; i++) {
+      const c = cols[i - (ROLL_COLS - cols.length)];
+      row += c ? RAMP[Math.min(9, Math.floor(c[pc] ** 1.7 * 10))] : ' ';
+    }
+    html += ' │' + esc(row) + '│\n';
+  }
+  html += `<span class="dim">   ${chord ? 'chord ' + chord.name : 'listening for chords...'}</span>`;
+  $('roll').innerHTML = html;
+}
+
+const setText = (el, text) => { if (el.textContent !== text) el.textContent = text; };
+function renderFooter() {
+  const lv = Math.min(1, Math.max(0, (20 * Math.log10(eng.level || 1e-6) + 50) / 50));
+  const cells = Math.round(lv * 12);
+  setText($('meter'), '▕' + '█'.repeat(cells) + '░'.repeat(12 - cells) + '▏');
+  const T = eng.tempo, parts = [];
+  parts.push(T.locked ? `${T.bpm.toFixed(1)} bpm` : '--- bpm');
+  if (eng.key) parts.push(`${NOTES[eng.key.root]} ${eng.key.mode}`);
+  parts.push(state.label || 'no source');
+  if (eng.silent && state.node) parts.push('silence');
+  setText($('stats'), parts.join(' · '));
+}
+
+// ---------------------------------------------------------------- recording
+
+// M records what's in the window (just the page: no frame, no cursor, nothing else on screen)
+// with the sound, into Videos\Toaster: MP4 (H.264 and AAC, ready for TikTok, Shorts and Reels)
+// where Chromium can write it, else WebM. Set it up first (L for the vertical layout); the
+// header and footer hide while it records, and the taskbar icon goes red.
+const REC_TYPES = ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'];
+// How far the recorded sound is held back to line up with the picture (seconds). The blocks are
+// drawn to land when you hear a hit, and a recording has no speakers: measured on the demo beat
+// (drawn late to allow for the speakers), they landed 38 ms after the hit in the recording. So
+// what's drawn late for your ears gets the sound held back to match: that, less 12 ms (system
+// audio, drawn 50 ms earlier, lands 12 ms early, which looks in time), and your sync trim.
+const recDelay = () => Math.max(0, heardAfter() - 12 - state.syncTrim) / 1000;
+const rec = { mr: null, video: null, tap: null, busy: false, write: Promise.resolve(), noticeTimer: 0 };
+
+async function toggleRecording() {
+  if (rec.busy) return;
+  rec.busy = true;
+  try {
+    if (rec.mr) await stopRecording();
+    else await startRecording();
+  } catch (err) {
+    console.error('recording:', err);
+    endRecordingTracks();
+    await window.nc?.recStop?.();
+    showNotice('could not record: ' + (err?.message || err));
+  } finally {
+    rec.busy = false;
+  }
+}
+
+// The window's picture as a stream: just the page, at the window's own shape, up to 1920 on the
+// long side (the vertical layout comes out about 1080 x 1920, the size TikTok and Shorts want).
+// Left alone, the capture would be 1920 x 1080 whatever the window's shape, with bars round it.
+async function windowStream() {
+  const id = await window.nc.recSource();
+  const w = innerWidth * devicePixelRatio, h = innerHeight * devicePixelRatio, k = Math.min(2, 1920 / Math.max(w, h));
+  const even = (x) => 2 * Math.round((x * k) / 2);
+  const size = { minWidth: even(w), maxWidth: even(w), minHeight: even(h), maxHeight: even(h) };
+  return navigator.mediaDevices.getUserMedia({ audio: false, video: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: id, maxFrameRate: 60, ...size } } });
+}
+
+async function startRecording() {
+  if (!window.nc?.recSource) throw new Error('recording works in the app, not in a browser');
+  // the note about the last recording goes first, and is off the screen before the capture starts
+  // (hidden once recording had begun, it was in the first second of the video)
+  hideNotice();
+  await new Promise((r) => { requestAnimationFrame(() => requestAnimationFrame(r)); setTimeout(r, 100); });
+  rec.video = await windowStream();
+  const dest = ac.createMediaStreamDestination(), delay = ac.createDelay(1);
+  delay.connect(dest);
+  rec.tap = { dest, delay, node: null };
+  tapRecording();
+  const type = REC_TYPES.find((m) => MediaRecorder.isTypeSupported(m));
+  if (!type) throw new Error('no video format to record in');
+  await window.nc.recStart(type.startsWith('video/mp4') ? 'mp4' : 'webm');
+  const mr = new MediaRecorder(new MediaStream([...rec.video.getVideoTracks(), ...dest.stream.getAudioTracks()]), { mimeType: type, videoBitsPerSecond: 8e6, audioBitsPerSecond: 192e3 });
+  rec.write = Promise.resolve();
+  // each piece on to the file in turn; one that can't be written stops the recording (and a
+  // failure never jams the line for the pieces after it)
+  mr.ondataavailable = (e) => {
+    if (!e.data.size) return;
+    rec.write = rec.write.then(() => e.data.arrayBuffer()).then((b) => window.nc.recChunk(b))
+      .then((ok) => { if (!ok) recordingFailed('the file could not be written'); }, (err) => recordingFailed(err?.message || err));
+  };
+  mr.onerror = (e) => recordingFailed(e.error?.message || 'the recorder stopped');
+  mr.start(1000);
+  rec.mr = mr;
+  document.body.classList.add('recording');
+  $('b-rec').textContent = '■ stop';
+}
+
+// The sound comes from the app's own audio graph, from whatever it's listening to (the music as
+// it arrives, not after the speakers), held back recDelay(), and follows a change of source
+// mid-recording.
+function tapRecording() {
+  if (!rec.tap || rec.tap.node === state.node) return;
+  try { rec.tap.node?.disconnect(rec.tap.delay); } catch { /* gone */ }
+  rec.tap.node = state.node;
+  rec.tap.delay.delayTime.value = recDelay();
+  state.node?.connect(rec.tap.delay);
+}
+
+async function stopRecording() {
+  const mr = rec.mr;
+  await new Promise((resolve) => { mr.onstop = resolve; mr.stop(); });
+  await rec.write;
+  endRecordingTracks();
+  const file = await window.nc.recStop();
+  if (file) showNotice('saved ' + file.split(/[\\/]/).pop(), file);
+}
+
+// The recording can't go on (the disk is full, the recorder broke): stop it, keeping what was
+// written (main.js leaves that as a .part file), and say so, once.
+function recordingFailed(why) {
+  if (!rec.mr || rec.failing) return;
+  rec.failing = true;
+  try { rec.mr.ondataavailable = null; rec.mr.stop(); } catch { /* already stopping */ }
+  endRecordingTracks();
+  Promise.resolve(window.nc?.recStop?.()).finally(() => { rec.failing = false; });
+  showNotice('recording stopped: ' + why);
+}
+// The window is closing mid-recording (main.js asks): finish the video properly, then close.
+window.nc?.onRecFinish?.(async () => {
+  try { if (rec.mr) await toggleRecording(); } finally { window.nc.closeWindow(); }
+});
+window.nc?.onRecFailed?.((why) => recordingFailed(why));
+
+function endRecordingTracks() {
+  rec.video?.getTracks().forEach((t) => t.stop());
+  try { rec.tap?.node?.disconnect(rec.tap.delay); } catch { /* gone */ }
+  rec.tap?.delay.disconnect();
+  rec.mr = rec.video = rec.tap = null;
+  document.body.classList.remove('recording');
+  $('b-rec').textContent = '● rec';
+}
+
+// Drop clips (J; clips.js): the build-up and the drop, saved as a video of their own each time
+// one hits, into Videos\Toaster.
+const clips = createClips({
+  ac, types: REC_TYPES, stream: windowStream, node: () => state.node, delay: recDelay,
+  save: (buf, ext) => window.nc.saveClip(buf, ext),
+  said: (text, file) => showNotice(text, file),
+});
+async function toggleClips() {
+  if (!window.nc?.saveClip) { flashStatus('drop clips work in the app, not in a browser'); return; }
+  try {
+    const on = await clips.toggle();
+    if (on) clipsThisSong = 0;
+    document.body.classList.toggle('clips-on', on);
+    flashStatus(on ? 'drop clips: on (the first two drops of each song, with their build-up)' : 'drop clips: off');
+  } catch (err) {
+    showNotice('could not start drop clips: ' + (err?.message || err));
+  }
+}
+
+// A note in the corner for a few seconds, with a button to show the file. While recording it would
+// be in the video (a drop clip or an export finishing then), so it goes to the status line in the
+// footer instead, which hides while recording.
+function showNotice(text, file) {
+  if (rec.mr) { flashStatus(text); return; }
+  const el = $('notice');
+  el.textContent = text;
+  if (file) {
+    const b = document.createElement('button');
+    b.textContent = 'show in folder';
+    b.onclick = () => { window.nc?.recShow(file); hideNotice(); };
+    el.append(' ', b);
+  }
+  el.hidden = false;
+  clearTimeout(rec.noticeTimer);
+  rec.noticeTimer = setTimeout(hideNotice, 8000);
+}
+function hideNotice() { $('notice').hidden = true; }
+
+// ---------------------------------------------------------------- loops
+
+// Listening runs on a timer so it keeps going when the window is covered; drawing uses frames.
+// The engine runs every tick (~66 a second); the code it writes is refreshed every third tick,
+// which is plenty since patterns change at bar lines. Typing runs every tick to stay smooth.
+let tick = 0, hushWas = false;
+setInterval(() => {
+  const t = nowSec();
+  if (state.node) eng.frame(t, ac.currentTime); // the audio clock times the onsets for the tempo
+  if (tick++ % 3 === 0) {
+    const lines = buildLines(eng, { song: currentSong(), source: state.label || 'nothing yet', hushed: state.hushed }, t);
+    view.update(lines, t, state.hushed !== hushWas); // a hush goes in at once
+    hushWas = state.hushed;
+  }
+  view.step(t);
+}, 15);
+
+// Layers whose feature is off are taken out of the page: an empty full-window canvas still costs
+// the GPU every frame (measured: about 2% of a core for the four that used to stay up).
+const LAYER_ON = {
+  cam: () => cam.on && !state.ascii && CAM_FX[state.camFx] !== 'windows', // (still read for the ASCII camera and the windows, just not shown)
+  vis: () => ON_VIS.includes(VISUALS[state.visual]),
+  warp: () => VISUALS[state.visual] === 'warp',
+  worlds: () => VISUALS[state.visual] === 'worlds',
+  worldwords: () => VISUALS[state.visual] === 'worlds',
+  field: () => FIELD_VIS.includes(VISUALS[state.visual]),
+  asciicam: () => cam.on && state.ascii,
+  orb: () => state.orb,
+  punch: () => state.blocks,
+  segcam: () => cam.on && (state.eyes || CAM_FX[state.camFx] === 'windows'),
+  lens: () => cam.on,
+};
+function showLayers() {
+  for (const id in LAYER_ON) { const el = $(id), on = LAYER_ON[id](); if (el.hidden === on) el.hidden = !on; }
+}
+
+// Drawing: at most 60 frames a second, even on faster monitors, and none while minimized. With
+// nothing to hear the picture hardly moves, so after 3 seconds of quiet it draws 30 times a
+// second, and after 30 seconds 10 times, if the window isn't in front (it measured 16% of a core
+// drawing a still screen at 60). The next sound brings it straight back. Never while recording,
+// with the camera on or during a drop.
+let poolAt = 0, footerAt = 0, lastFrame = 0, windowShown = true;
+let trackShown = ''; // the tracking trouble last told about (see draw)
+window.nc?.onWindowShown((shown) => { windowShown = shown; });
+function frameGap(t) {
+  if (rec.mr || cam.on || takeover.active) return 1000 / 61;
+  const quiet = state.node ? t - eng.lastSound : Infinity;
+  return quiet > 30 && !document.hasFocus() ? 1000 / 10.5 : quiet > 3 ? 1000 / 30.5 : 1000 / 61;
+}
+function draw(now) {
+  requestAnimationFrame(draw);
+  const t = nowSec();
+  if (!windowShown || now - lastFrame < frameGap(t)) return;
+  lastFrame = now;
+  showLayers();
+  view.highlight(t, eng);
+  const grid = renderGrid();
+  renderRoll();
+  const mode = VISUALS[state.visual];
+  if (FIELD_VIS.includes(mode)) field.draw(t, eng, mode, col, cam.on && state.ascii ? cam : null);
+  // the camera as text goes over whichever background is picked (in place of the ASCII ones'
+  // own text where you are, with the cut-out), so every background works with it
+  // (with the windows effect, the windows show you as text instead: you're only in them)
+  if (cam.on && state.ascii && CAM_FX[state.camFx] !== 'windows') asciiCam.draw(t, eng, 'cam', col, cam);
+  if (mode === 'tunnel') tunnel.draw(t, eng, col);
+  else if (mode === 'spiral') spiral.draw(t, eng, col, stageRect());
+  else if (mode === 'pitchwheel') wheel.draw(t, eng, col, stageRect());
+  else if (mode === 'warp') warp.draw(t, eng, col);
+  else if (mode === 'worlds') {
+    const played = ['bd', 'sd', 'hhc', 'hho'].filter((id) => eng.present(id, t)).map((id) => ({ bd: 'kick', sd: 'clap', hhc: 'hats', hho: 'open hats' })[id]).join(' ');
+    worlds.draw(t, eng, { song: currentSong(), lines: Object.values(lineTexts()).filter(Boolean), played, chord: eng.key ? `${NOTES[eng.key.root]} ${eng.key.mode}` : '', codeBox, col });
+  }
+  else if (mode === 'cuts') cuts.draw(t, eng, col, syncOffset(), state.calm, { lines: lineTexts(), cam: cam.frame, art: state.source === 'system' && !state.manual ? artImg : null });
+  if (state.orb) orb.draw(t, eng, col, syncOffset(), (out) => bands(eng, out), stageRect());
+  if (state.blocks) punch.draw(t, eng, col, syncOffset());
+  if (card.shown) card.draw(t, eng, { song: currentSong(), source: state.label, frame: cam.frame, face: meshFace() || cam.face, art: state.source === 'system' && !state.manual ? artImg : null }, col);
+  if (t - poolAt > 2) { poolAt = t; field.setPool($('code').textContent); }
+  cam.draw(col, camRect(), { mask: tracker.mask, bar: eng.bar });
+  if (cam.on) {
+    // (the face is looked for while the finger frame is open too: a wink changes its filter)
+    const windows = CAM_FX[state.camFx] === 'windows';
+    tracker.update(cam.video, state.eyes || windows || takeover.active || lens.showing, CAM_FX[state.camFx] === 'cut-out');
+    // tracking that couldn't start is said (once, and again if it gives up), so the hand effects
+    // not working isn't a mystery
+    const trouble = tracker.error ? `${tracker.error}|${tracker.gaveUp}` : '';
+    if (trouble !== trackShown) {
+      trackShown = trouble;
+      if (trouble) showNotice(tracker.gaveUp ? `Hand and face tracking is off (${tracker.error}). The camera still works; turning it off and on (C) tries again.` : `Hand and face tracking had trouble starting (${tracker.error}); trying again.`);
+    }
+    const where = { place: cam.place, crop: cam.drawCrop, rect: cam.rect, col };
+    lens.draw(t, { ...where, hands: tracker.hands, eyes: tracker.eyes, bar: eng.bar });
+    watchSigns(t);
+    if (state.eyes || windows) segcam.draw(t, { ...where, face: tracker.face, eyes: state.eyes, windows, frame: cam.frame, ascii: state.ascii });
+  }
+  glass.draw(t, eng, col, LAYERS);
+  takeover.draw(t, grid, cam.frame, eng.bar, state.calm);
+  if (t - footerAt > 0.125) { footerAt = t; renderFooter(); }
+}
+
+// ---------------------------------------------------------------- controls
+
+const run = (fn) => () => fn().catch(showError);
+$('go-system').onclick = run(useSystem);
+$('go-demo').onclick = run(useDemo);
+$('go-file').onclick = () => $('file').click();
+$('go-input').onclick = run(chooseInput);
+$('file').onchange = () => { const f = $('file').files[0]; if (f) useFile(f).catch(showError); $('file').value = ''; };
+$('b-source').onclick = () => showMenu();
+// The visual button opens a list of the backgrounds to pick from (V steps through them); a click
+// anywhere else or any key closes it.
+const visMenu = $('vis-menu');
+function showVisMenu(open) {
+  visMenu.hidden = !open;
+  if (!open) return;
+  visMenu.innerHTML = VISUALS.map((v, i) => `<button type="button" role="menuitem" data-i="${i}"${i === state.visual ? ' class="on"' : ''}>${v}</button>`).join('');
+  visMenu.style.left = `${$('b-visual').offsetLeft}px`;
+  visMenu.style.minWidth = `${$('b-visual').offsetWidth}px`;
+}
+$('b-visual').onclick = () => showVisMenu(visMenu.hidden);
+visMenu.onclick = (e) => { const b = e.target.closest('button'); if (b) { setVisual(+b.dataset.i); showVisMenu(false); } };
+addEventListener('pointerdown', (e) => { if (!visMenu.hidden && !e.target.closest('#vis-menu, #b-visual')) showVisMenu(false); }, true);
+$('b-blocks').onclick = () => setBlocks(!state.blocks);
+$('b-cam').onclick = () => toggleCam();
+$('b-card').onclick = () => toggleCard();
+$('b-orb').onclick = () => setOrb(!state.orb);
+$('b-glass').onclick = () => setGlass(!state.glass);
+$('b-strudel').onclick = () => openInStrudel();
+$('b-rec').onclick = () => toggleRecording();
+$('b-layout').onclick = () => toggleLayout();
+$('b-mini').onclick = () => toggleMini();
+$('b-help').onclick = () => $('help').showModal();
+
+$('rename-form').addEventListener('submit', () => {
+  const title = $('rename-title').value.trim(), artist = $('rename-artist').value.trim();
+  state.manual = title || artist ? { title: title || 'untitled', artist: artist || 'Unknown' } : null;
+});
+
+// ---------------------------------------------------------------- keys
+
+// Every action and its key. Each key can be changed in the help (?): click it, press the new one;
+// a key another action has goes over to it in exchange. The changes are kept with the settings
+// (only the ones that differ from these). Esc, ? and F11 stay as they are.
+const ACTIONS = [
+  { id: 'source', key: 's', run: () => showMenu() },
+  { id: 'visual', key: 'v', run: () => setVisual((state.visual + 1) % VISUALS.length) },
+  { id: 'strength', key: 'a', run: () => (VISUALS[state.visual] === 'worlds' ? nextWorldLook() : setStrength((state.strength + 1) % STRENGTHS.length, true)) },
+  { id: 'blocks', key: 'p', run: () => setBlocks(!state.blocks) },
+  // the blocks' timing: earlier if they land after the beat, later if before
+  { id: 'later', key: '[', run: () => nudgeSync(-10) },
+  { id: 'earlier', key: ']', run: () => nudgeSync(10) },
+  { id: 'cam', key: 'c', run: () => toggleCam() },
+  { id: 'card', key: 'n', run: () => toggleCard() },
+  { id: 'orb', key: 'r', run: () => setOrb(!state.orb) },
+  { id: 'glass', key: 'g', run: () => setGlass(!state.glass) },
+  { id: 'strudel', key: 'o', run: () => openInStrudel() },
+  { id: 'rec', key: 'm', run: () => toggleRecording() },
+  { id: 'clips', key: 'j', run: () => toggleClips() },
+  { id: 'export', key: 'x', run: () => exportSong().catch(showError) },
+  { id: 'camfx', key: 'k', run: () => setCamFx((state.camFx + 1) % CAM_FX.length, true) },
+  { id: 'tap', key: ' ', run: () => tapBeat() },
+  { id: 'hush', key: 'q', run: () => setHush(!state.hushed) },
+  { id: 'drop', key: 'd', run: () => { if (DROPS[state.drop] === 'off') state.drop = 0; eng.on.drop(); } },
+  { id: 'dropfx', key: 'b', run: () => { state.drop = (state.drop + 1) % DROPS.length; saveSettings(); flashStatus('drop fx: ' + DROPS[state.drop]); } },
+  { id: 'machine', key: 'i', run: () => { state.info = !state.info; sys.show(state.info); } },
+  { id: 'layout', key: 'l', run: () => toggleLayout() },
+  { id: 'mini', key: 'w', run: () => toggleMini() },
+  { id: 'theme', key: 't', run: () => nextTheme() },
+  { id: 'name', key: 'e', run: () => renameSong() },
+  { id: 'hide', key: 'h', run: () => document.body.classList.toggle('clean') },
+  { id: 'full', key: 'f', run: () => window.nc?.toggleFullscreen() },
+];
+// the footer's list of keys, in this order: [actions..., what it says]
+const FOOTER = [['visual', 'visual'], ['strength', 'strength'], ['theme', 'theme'], ['orb', 'orb'], ['blocks', 'blocks'], ['glass', 'glass'], ['card', 'card'], ['cam', 'cam'], ['camfx', 'cam fx'], ['tap', 'tap'], ['hush', 'hush'], ['drop', 'drop now'], ['dropfx', 'drop fx'], ['rec', 'rec'], ['clips', 'drop clips'], ['export', 'export'], ['strudel', 'strudel'], ['layout', 'layout'], ['mini', 'mini'], ['hide', 'hide'], ['full', 'full'], ['machine', 'machine'], ['source', 'source'], ['name', 'name'], ['later', 'earlier', 'sync']];
+const RESERVED = new Set(['escape', '?', '/', 'f11', 'tab', 'enter', 'shift', 'control', 'alt', 'meta', 'capslock', 'contextmenu']);
+const keyOf = (id) => state.keys[id] ?? ACTIONS.find((a) => a.id === id).key;
+const keyName = (k) => (k === ' ' ? 'Space' : k.length === 1 ? k.toUpperCase() : k[0].toUpperCase() + k.slice(1));
+const K = (id) => keyName(keyOf(id)); // an action's key as written
+let byKey = new Map();
+
+function nudgeSync(ms) {
+  state.syncTrim = Math.max(-200, Math.min(200, state.syncTrim + ms));
+  saveSettings();
+  flashStatus(`blocks sync: ${state.syncTrim > 0 ? '+' : ''}${state.syncTrim} ms`);
+}
+// tap tempo: four taps on the beat set it, for a song it can't find (or finds wrong)
+function tapBeat() {
+  document.activeElement?.blur?.();
+  const n = eng.tap(nowSec());
+  flashStatus(n < 4 ? 'tap ' + '•'.repeat(n) : `tempo ${Math.round(eng.tempo.bpm)} (tapped)`);
+}
+function renameSong() {
+  const s = currentSong();
+  $('rename-title').value = state.manual?.title || s?.title || '';
+  $('rename-artist').value = state.manual?.artist || s?.artist || '';
+  $('rename').showModal();
+}
+
+// The keys as set, everywhere they're shown: the footer, the header buttons' tips, the help (each
+// key a button to change it) and the help's mentions of them.
+function applyKeys() {
+  byKey = new Map(ACTIONS.map((a) => [keyOf(a.id), a]));
+  document.querySelector('footer .keys').textContent = FOOTER.map((f) => `${f.slice(0, -1).map(K).join(' ')} ${f[f.length - 1]}`).join(' · ');
+  for (const b of document.querySelectorAll('header button[data-act]')) b.title = `${b.dataset.title} (${K(b.dataset.act)})`;
+  for (const el of document.querySelectorAll('#help [data-k]')) el.textContent = K(el.dataset.k);
+  for (const row of document.querySelectorAll('#help tr[data-act]')) {
+    const cell = row.cells[0];
+    cell.textContent = '';
+    row.dataset.act.split(',').forEach((id, i) => {
+      if (i) cell.append(' / ');
+      const b = document.createElement('button');
+      b.className = 'key';
+      b.textContent = K(id);
+      b.title = 'click, then press the key you want for this';
+      b.onclick = () => { rebinding = { id, b }; b.textContent = 'press a key'; b.classList.add('waiting'); };
+      cell.append(b);
+    });
+  }
+}
+let rebinding = null;
+// (while a key button in the help waits, the next key goes to it, and nowhere else)
+addEventListener('keydown', (e) => {
+  if (!rebinding) return;
+  const k = e.key.toLowerCase();
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  if (['shift', 'control', 'alt', 'meta'].includes(k)) return; // the key itself is still to come
+  const { id, b } = rebinding;
+  rebinding = null;
+  b.blur();
+  if (k !== 'escape' && !RESERVED.has(k)) {
+    const other = ACTIONS.find((a) => a.id !== id && keyOf(a.id) === k);
+    if (other) state.keys[other.id] = keyOf(id); // they trade
+    state.keys[id] = k;
+    for (const a of ACTIONS) if (state.keys[a.id] === a.key) delete state.keys[a.id];
+    saveSettings();
+    flashStatus(`${K(id)}: ${FOOTER.find((f) => f.includes(id))?.at(-1) ?? id}` + (other ? ` (${K(other.id)} now)` : ''));
+  }
+  applyKeys();
+}, true);
+$('keys-reset').onclick = () => { state.keys = {}; saveSettings(); applyKeys(); flashStatus('keys as they came'); };
+
+addEventListener('keydown', (e) => {
+  if (e.target.closest('dialog') || e.ctrlKey || e.metaKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (!visMenu.hidden) { showVisMenu(false); if (k === 'escape') return; }
+  if (k === 'escape') { $('menu').hidden = true; $('alerts').innerHTML = ''; return; }
+  if (e.target.closest('#alerts')) return; // let Enter/Space press the message box's button
+  if (k === '?' || k === '/') { $('help').showModal(); return; }
+  if (k === 'f11') { e.preventDefault(); window.nc?.toggleFullscreen(); return; }
+  const act = byKey.get(k);
+  if (!act) return;
+  if (k === ' ' || act.id === 'full') e.preventDefault(); // (Space would scroll or press a button)
+  act.run();
+});
+
+let statusTimer;
+function flashStatus(text) {
+  const el = $('status');
+  el.textContent = text;
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => { el.textContent = restingStatus(); }, 1600);
+}
+
+addEventListener('dragover', (e) => e.preventDefault());
+addEventListener('drop', (e) => {
+  e.preventDefault();
+  const f = [...(e.dataTransfer?.files || [])].find((x) => x.type.startsWith('audio/') || /\.(mp3|wav|ogg|flac|m4a|aac|webm)$/i.test(x.name));
+  if (f) useFile(f).catch(showError);
+});
+
+// main.js calls this right after the window loads (as a user gesture, which screen capture needs).
+window.startSystemAudio = () => useSystem().catch((err) => showMenu(`Could not hear your PC's sound (${err?.message || err}). The demo beat, a file or an input still work: pick one below.`));
+
+// For testing from tools/cdp.mjs: lets a script drive the app (e.g. run the demo silently).
+window.__nc = { get artImg() { return artImg; }, eng, state, view, ac, cam, takeover, punch, card, glass, orb, cuts, worlds, tracker, lens, segcam, gestures, setHush, meshFace, openInStrudel, strudelProgram, strudelLink, attach, syncOffset, useDemo, useSystem, useInput, setCalm, setVisual, setBlocks, setOrb, setGlass, toggleLayout, toggleCard, showMenu };
+
+// the version, in the menu and the help
+window.nc?.version?.().then((v) => { for (const el of document.querySelectorAll('.ver')) el.textContent = 'v' + v; });
+
+loadSettings();
+applyKeys();
+applyTheme();
+setVisual(state.visual);
+setStrength(state.strength);
+setCamFx(state.camFx);
+setBlocks(state.blocks);
+setOrb(state.orb);
+setGlass(state.glass);
+setCalm(state.calm);
+applyCard();
+// the first time Toaster opens, a word on where to start (it's already listening to the PC)
+if (state.firstRun && window.nc) setTimeout(() => showNotice(`Toaster is listening to whatever your PC plays and writing it as code. ? shows the keys and how it works; ${K('source')} picks another source; ${K('cam')} turns on the camera.`), 2500);
+requestAnimationFrame(draw);
+if (!window.nc) showMenu('Running outside the desktop app: pick a source.', 'info');

@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:" />
+<title>Toaster</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<canvas id="cam"></canvas>
+<canvas id="worlds" aria-hidden="true"></canvas>
+<canvas id="worldwords" aria-hidden="true"></canvas>
+<canvas id="vis"></canvas>
+<canvas id="warp" aria-hidden="true"></canvas>
+<canvas id="field" aria-hidden="true"></canvas>
+<canvas id="asciicam" aria-hidden="true"></canvas>
+<canvas id="orb" aria-hidden="true"></canvas>
+<canvas id="punch"></canvas>
+<div id="desk-back" aria-hidden="true"><div class="big"></div><div class="icons"></div></div>
+
+<header id="bar">
+  <span id="status" class="tag">○ idle</span>
+  <span class="appname">toaster</span>
+  <span class="spacer"></span>
+  <!-- in groups, as in the help: source | look | camera | save & share | window | help -->
+  <button id="b-source" class="grp" data-act="source" data-title="Audio source" title="Audio source (S)">source</button>
+  <button id="b-visual" class="grp" data-act="visual" data-title="Background visual: pick one" title="Background visual: pick one (V)" aria-haspopup="menu">spectrum ▾</button>
+  <div id="vis-menu" class="drop" role="menu" hidden></div>
+  <button id="b-orb" data-act="orb" data-title="Dot orb, over any background" title="Dot orb, over any background (R)">orb</button>
+  <button id="b-blocks" data-act="blocks" data-title="Punchcard blocks over any visual" title="Punchcard blocks over any visual (P)">blocks</button>
+  <button id="b-glass" data-act="glass" data-title="Glass blob over the code" title="Glass blob over the code (G)">glass</button>
+  <button id="b-card" data-act="card" data-title="Now-playing ID card: off, on, big" title="Now-playing ID card: off, on, big (N)">card</button>
+  <button id="b-cam" class="grp" data-act="cam" data-title="Webcam: off, on, big eyes, ASCII" title="Webcam: off, on, big eyes, ASCII (C)">cam</button>
+  <button id="b-rec" class="grp" data-act="rec" data-title="Record a video of the window, with the sound, into Videos\Toaster" title="Record a video of the window, with the sound, into Videos\Toaster (M)">● rec</button>
+  <button id="b-strudel" data-act="strudel" data-title="Open this code in Strudel, in your browser" title="Open this code in Strudel, in your browser (O)">strudel ↗</button>
+  <button id="b-mini" class="grp" data-act="mini" data-title="Mini player: a small window in the corner, over everything else" title="Mini player: a small window in the corner, over everything else (W)">mini</button>
+  <button id="b-layout" class="wide-only" data-act="layout" data-title="Vertical layout for TikTok/Shorts" title="Vertical layout for TikTok/Shorts (L)">9:16</button>
+  <button id="b-help" class="grp" title="Keys and how it works">?</button>
+</header>
+
+<main id="code">
+  <div class="ln title" id="ln-title" title="Press E to name the song yourself"></div>
+  <div class="ln" id="ln-tempo"></div>
+  <div class="ln" id="ln-scale"></div>
+  <div class="ln gap"></div>
+  <div class="ln" id="ln-bd"></div>
+  <div class="ln" id="ln-sd"></div>
+  <div class="ln" id="ln-hhc"></div>
+  <div class="ln" id="ln-hho"></div>
+  <pre class="panel" id="grid"></pre>
+  <div class="ln" id="ln-bassline"></div>
+  <div class="ln" id="ln-chords"></div>
+  <div class="ln" id="ln-vox"></div>
+  <pre class="panel" id="roll"></pre>
+</main>
+<canvas id="glass" hidden></canvas>
+<canvas id="segcam"></canvas>
+<canvas id="lens"></canvas>
+<pre id="sys" class="panel" hidden></pre>
+<div id="card" hidden aria-label="Now-playing ID card"></div>
+
+<div id="desk-front" aria-hidden="true"><div class="wins"></div></div>
+<div id="alerts"></div>
+<div id="notice" hidden></div>
+<div id="err" hidden></div>
+
+<footer>
+  <span class="stat" id="meter"></span>
+  <span class="stat" id="stats"></span>
+  <span class="spacer"></span>
+  <span class="keys">S source · V visual · A strength · P blocks · [ ] sync · C cam · N card · R orb · G glass · O strudel · M rec · J drop clips · X export · K cam fx · Space tap · Q hush · D drop now · B drop fx · I machine · L layout · W mini · T theme · E name · H hide · F full</span>
+</footer>
+
+<div id="bsod" aria-hidden="true">
+  <div class="face">:(</div>
+  <p>Your PC ran into a drop and needs to dance. We're just collecting some bass, and then we'll restart for you.</p>
+  <p>100% complete</p>
+  <small>For more information about this issue, keep listening.<br />Stop code: BASS_DROP_DETECTED</small>
+</div>
+
+<div id="menu" hidden>
+  <div class="card">
+    <h1>toaster <small class="ver"></small></h1>
+    <p class="sub">turns whatever's playing into live code</p>
+    <div class="opts">
+      <button id="go-system">▶ system audio</button><span>everything playing on this PC (Spotify, YouTube, anything)</span>
+      <button id="go-demo">✦ demo beat</button><span>built-in test track</span>
+      <button id="go-file">▤ audio file</button><span>or drop a file on the window</span>
+      <button id="go-input">◉ audio input</button><span>a mic or line-in</span>
+    </div>
+    <p class="tip">Nothing is recorded or uploaded. Esc closes this.</p>
+  </div>
+</div>
+<input type="file" id="file" accept="audio/*" hidden />
+
+<dialog id="devices">
+  <h2>choose an audio input</h2>
+  <div id="device-list"></div>
+  <form method="dialog"><button>cancel</button></form>
+</dialog>
+
+<dialog id="help">
+  <h2>how it works <small class="ver"></small></h2>
+  <p>Toaster listens to whatever your PC is playing and writes it out as Strudel code, the way DJ_Dave performs: named lines, typed from a blank window, lighting up as they play.</p>
+  <ul>
+    <li><b>Beat:</b> finds kick, clap and hi-hat hits (closed and open, by how long they ring), the tempo and where bars start, and learns which of 16 steps each plays.</li>
+    <li><b>Harmony:</b> reads the bass note and chord of each bar and the key. A lead/vocal line becomes <code>vox: s("vox").slice(16, …)</code>, with the note as the slice.</li>
+    <li><b>Song:</b> the title comes from Windows' now-playing info. A new song wipes the screen and starts typing again.</li>
+    <li><b>Drops:</b> when the kick comes back hard after 3+ seconds away, the screen gets taken over: windows pop up on every kick (webcam windows in each theme colour, close-ups of your face and of one eye, your eye on a little computer screen, an XP error box, a little blue screen, Notepad). Or a full blue screen instead. Press <kbd data-k="drop">D</kbd> to fire it any time. Each bar starts with a flash of colour, and it ends on an empty desktop with one alert.</li>
+    <li><b>Camera:</b> the close-ups, big eyes and the finger frame find your face and hands on this PC (Windows' own face detection and Google's MediaPipe); nothing is uploaded.</li>
+  </ul>
+  <p>Filters sit on sliders that slide when the music's filter moves; pumping chords get .duck() on the kick; the tempo line notes a breakdown or a drop; long lines wrap onto indented rows.</p>
+  <p>It's a live reconstruction for show, not an exact transcription. Steady beats work best. What you pick (the background and its strength, theme, orb, blocks, glass, card, camera effect, drop effect, and the keys) is remembered next time; the camera always starts off.</p>
+  <label class="calm"><input type="checkbox" id="calm" /><span><b>Fewer flashes</b>, for anyone sensitive to flashing light: no full-screen flashes or hard cuts (the cuts background changes scene gently, at most once a bar), no colour flashes in a drop, the blue screen fades, kicks don't punch the picture. On from the start if Windows' "Show animations" is off.</span></label>
+  <table>
+    <tr class="sec"><th colspan="2">look</th></tr>
+    <tr data-act="visual"><td>V</td><td>background: spectrum, tunnel, spiral (a turn a bar, every hit a mark where it fell), pitch wheel (the twelve notes round a circle: the chord as a shape, the bass and the melody's notes), warp (a feedback shader: stripes in a kaleidoscope, trailing and swirling, punched by the kick), cuts (each drum owns a scene, and every hit cuts to it, each scene Toaster's own view of the song: the drum's word huge, its line of code magnified, its 16 steps as a punchcard, the spectrum falling in dots, the waveform, you or the cover in big dots, the tempo and key, the spectrum as text mirrored like a kaleidoscope, a tunnel of rectangles; it starts bare and builds as the parts come in; after Atsushi Tadokoro's live sets), worlds (a film of planets, after Anthropic's Claude Opus 5.5 launch film: every kick cuts to another world on the same horizon, an extreme close-up of something seen as a planet: honey, agate, lace, a leaf, bread crust, plant cells, oil on water, a circuit board, the code itself; when the kick drops out the film rests on a horizon at dawn till it's back), rain, scope, off</td></tr>
+    <tr data-act="strength"><td>A</td><td>how strongly the ASCII background shows: soft, normal, bold. With the worlds on, their look instead: auto (film, and on each drop another look for 8 bars), film, ASCII (the planet as text in its own colours), code (the planet drawn in the song's own code), ink (the theme's two colours, dithered), risograph, cyanotype, receipt, thermal camera, night vision, CRT, VHS, quadtree</td></tr>
+    <tr data-act="theme"><td>T</td><td>theme: bluescreen, blackscreen, terminal, pink, whitescreen</td></tr>
+    <tr data-act="orb"><td>R</td><td>orb: a cloud of dots over whichever background you picked; it holds a form for 8 bars, then flows into the next, landing on the one (15 of them: a sphere, a crystal, orbits with particles, a staff the bass notes appear on, a galaxy, a network its signals run through on the hats, waves riding the spectrum, a puzzle sphere that turns a slice a beat, a globe's lines, a ring, an icosahedron, rings riding the spectrum, rays, ripples, a shape a bar); the kick breathes it out, the clap spins it, the hats send light round it</td></tr>
+    <tr data-act="blocks"><td>P</td><td>punchcard blocks on top of whichever background you picked</td></tr>
+    <tr data-act="glass"><td>G</td><td>glass: a blob of liquid glass floats over the code and bends it like a lens, swelling on the kick</td></tr>
+    <tr data-act="card"><td>N</td><td>now-playing ID card: the song, tempo and key, and your webcam (or the song's cover, or the sound) as a 1-bit picture. On by default in the vertical layout. <kbd data-k="card">N</kbd> again makes it big (the cover or you in big dots, as big as fits), a third time puts it away. In the mini player (<kbd data-k="mini">W</kbd>) it's the big one shrunk to fit beside the code, and <kbd data-k="card">N</kbd> there just shows or hides it</td></tr>
+    <tr class="sec"><th colspan="2">camera</th></tr>
+    <tr data-act="cam"><td>C</td><td>webcam behind the code, tinted to the theme; press again for big eyes (windows over your face with your eyes and mouth blown up), again for ASCII (the camera as text, in place of the ASCII background), again for off. With the camera on, make a frame with your fingers (each hand an L) and a window opens between them, showing what's inside through a filter (16 of them; the first, keyframes, changes colours on every kick). It's a card with a filter on each side: turn one hand over and its end twists round to show the back; turn the whole card over and the back becomes the front. Flick it edge-on and back, bunch one hand's fingertips together, or wink, for the next filter. Pinch one hand (thumb on index) for a triangle; pinch both together, or open your hands, to close it. Hand signs, held a moment: ✌️ next theme, 👍 (a second) record or stop, ✊ (one, raised) hush, 🖐 back</td></tr>
+    <tr data-act="camfx"><td>K</td><td>camera effect: none, cut-out (just you, over the visuals: the room goes see-through), slit-scan (each row a moment later than the one above), datamosh (the picture melting along with whatever moves, fresh on every bar line), windows (the room gone, you only through little windows that pop open wherever you move, each keeping its moment, so moving leaves a trail of them, a burst on each kick, one on your face; after lo.fi.sci.fi's segcam). The first three work on the ASCII camera too, and with it the windows show you as text: you're only there in code</td></tr>
+    <tr class="sec"><th colspan="2">perform</th></tr>
+    <tr data-act="tap"><td>Space</td><td>tap the beat: four taps set the tempo, beats on your taps, the first one starting a bar. For a song it can't find the beat of (soft songs, rubato), or finds wrong</td></tr>
+    <tr data-act="hush"><td>Q</td><td>hush: every part muted (a _ before its name, like Strudel's hush()) and the background dimmed; <kbd data-k="hush">Q</kbd> again (or an open hand) brings it back, and so does a new song. A raised fist hushes too (two fists up, a flex, don't), and the status says "hush · <kbd data-k="hush">Q</kbd>" while it lasts. The sound keeps playing</td></tr>
+    <tr data-act="drop"><td>D</td><td>fire the drop effect now (it also fires by itself when the kick comes back after a break)</td></tr>
+    <tr data-act="dropfx"><td>B</td><td>drop effect: XP takeover, blue screen, off</td></tr>
+    <tr class="sec"><th colspan="2">save &amp; share</th></tr>
+    <tr data-act="rec"><td>M</td><td>record a video of the window with the sound (MP4, into Videos\Toaster); <kbd data-k="rec">M</kbd> again to stop. The header and footer hide while it records. For TikTok or Shorts, switch to the vertical layout (<kbd data-k="layout">L</kbd>) first</td></tr>
+    <tr data-act="clips"><td>J</td><td>drop clips: while on, the first two drops of each song are saved as videos of their own (the 6 to 16 seconds before each and 10 after), into Videos\Toaster, ready to post. Works alongside <kbd data-k="rec">M</kbd></td></tr>
+    <tr data-act="export"><td>X</td><td>export the song so far, decompiled: a MIDI file (drums, bass, chords and lead on their own tracks) and the whole song as Strudel code (every 4 bars as heard, the different ones named, played in order with arrange()), into Music\Toaster</td></tr>
+    <tr data-act="strudel"><td>O</td><td>open this code in Strudel (strudel.cc) in your browser, to play it and change it</td></tr>
+    <tr class="sec"><th colspan="2">window</th></tr>
+    <tr data-act="layout"><td>L</td><td>vertical layout for TikTok/Shorts (resizes the window)</td></tr>
+    <tr data-act="mini"><td>W</td><td>mini player: the window shrinks to a small panel in the corner of the screen, over everything else, still listening (the code over the background, and the card if it's on; drag it by its top edge); <kbd data-k="mini">W</kbd> again brings the window back</td></tr>
+    <tr data-act="hide,full"><td>H / F</td><td>hide the header and footer / fullscreen</td></tr>
+    <tr data-act="machine"><td>I</td><td>machine readout</td></tr>
+    <tr class="sec"><th colspan="2">setup</th></tr>
+    <tr data-act="source"><td>S</td><td>audio source: system audio, demo beat, file, input</td></tr>
+    <tr data-act="name"><td>E</td><td>name the song yourself</td></tr>
+    <tr data-act="later,earlier"><td>[ / ]</td><td>blocks sync: ] if they land after the beat, [ if before (10 ms a press, remembered)</td></tr>
+  </table>
+  <p class="keys-note">Click a key to change it, then press the one you want (a key that's taken swaps over). <button id="keys-reset" type="button">keys as they came</button></p>
+  <form method="dialog"><button>close</button></form>
+</dialog>
+
+<dialog id="rename">
+  <h2>name this song</h2>
+  <form method="dialog" id="rename-form">
+    <input id="rename-artist" placeholder="artist" autocomplete="off" />
+    <input id="rename-title" placeholder="title" autocomplete="off" />
+    <p class="tip">Leave both empty to go back to what Windows reports.</p>
+    <button value="ok">ok</button>
+  </form>
+</dialog>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Live Code Studio</title>
+<!--
+  Live Code Studio: a DJ_Dave-style live-coding stage built on Strudel (https://strudel.cc).
+  Open this file in Chrome or Edge, press Ctrl+Enter, and start editing.
+
+  Strudel is free software under AGPL-3.0-or-later. Using this page yourself is fine.
+  If you ever publish a modified version on the web, publish this page's source too
+  and keep the Strudel credit in the footer. Details: https://strudel.cc/technical-manual/project-start
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
+<!-- Pinned so your sets keep working even if Strudel changes later. -->
+<script src="https://unpkg.com/@strudel/repl@1.3.0"></script>
+<style>
+  :root { --bar-h: 44px; --font: "JetBrains Mono", Consolas, ui-monospace, monospace; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: var(--background, #051db5);
+    color: var(--foreground, #fff);
+    font-family: var(--font);
+    overflow-x: hidden;
+  }
+
+  /* Strudel's visual canvases (background punchcard/pianoroll, Hydra) sit behind the code. */
+  #test-canvas, #hydra-canvas { z-index: 0; }
+  #stage { position: relative; z-index: 1; padding: calc(var(--bar-h) + 8px) 0 40px; }
+  #stage > div, #stage .cm-editor { background: transparent !important; }
+  #stage .cm-content { padding: 8px 0 35vh; }
+  #stage .cm-line { padding: 0 24px; }
+  /* Keeps code readable over busy visuals. */
+  #stage .cm-line > * { background: var(--lineBackground, transparent); }
+  #stage .cm-editor.cm-focused { outline: none; }
+
+  header, footer {
+    position: fixed; left: 0; right: 0; z-index: 3;
+    display: flex; align-items: center; gap: 8px; padding: 0 12px;
+    transition: opacity .4s;
+  }
+  header { top: 0; height: var(--bar-h); background: linear-gradient(rgba(0,0,0,.35), transparent); }
+  footer { bottom: 0; height: 32px; font-size: 12px; background: linear-gradient(transparent, rgba(0,0,0,.35)); }
+  /* While playing, the chrome fades so the screen is all code. Hover to bring it back. */
+  body.live header, body.live footer { opacity: .12; }
+  header:hover, footer:hover, header:focus-within { opacity: 1 !important; }
+
+  .tag {
+    font-size: 12px; letter-spacing: .1em; text-transform: uppercase;
+    padding: 3px 8px; border: 1px solid currentColor; white-space: nowrap;
+  }
+  #live.on { background: var(--foreground, #fff); color: var(--background, #051db5); }
+  .file { font-size: 13px; opacity: .8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .spacer { flex: 1; }
+  button {
+    font: inherit; font-size: 13px; color: inherit; background: transparent;
+    border: 1px solid rgba(255,255,255,.55); padding: 4px 10px; cursor: pointer; white-space: nowrap;
+  }
+  button:hover, button:focus-visible { background: rgba(255,255,255,.18); outline: none; }
+  footer .keys { opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  footer a { color: inherit; opacity: .7; }
+  #err {
+    position: fixed; left: 12px; right: 12px; bottom: 40px; z-index: 4;
+    background: #fff; color: #b00020; padding: 8px 12px; font-size: 13px;
+    white-space: pre-wrap; border-left: 6px solid #b00020;
+  }
+  #toast {
+    position: fixed; right: 12px; top: calc(var(--bar-h) + 8px); z-index: 4; max-width: min(520px, calc(100vw - 24px));
+    background: #fff; color: #051db5; padding: 8px 12px; font-size: 13px;
+    opacity: 0; transform: translateY(-6px); transition: opacity .25s, transform .25s; pointer-events: none;
+  }
+  #toast.show { opacity: 1; transform: none; }
+  #drop {
+    position: fixed; inset: 12px; z-index: 5; display: none; place-items: center; text-align: center;
+    border: 3px dashed #fff; background: rgba(5,29,181,.88); color: #fff; font-size: 22px; padding: 24px;
+  }
+  body.dragging #drop { display: grid; }
+
+  dialog {
+    width: min(860px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto;
+    background: #051db5; color: #fff; border: 2px solid #fff; padding: 20px 24px; font-family: var(--font);
+  }
+  dialog::backdrop { background: rgba(0,0,0,.5); }
+  dialog h2 { font-size: 16px; margin: 0 0 12px; letter-spacing: .08em; text-transform: uppercase; }
+  dialog h3 { font-size: 13px; margin: 18px 0 6px; opacity: .8; text-transform: uppercase; letter-spacing: .08em; }
+  dialog table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  dialog td { padding: 3px 8px 3px 0; vertical-align: top; }
+  dialog td:first-child { white-space: nowrap; color: #ffe082; }
+  dialog form { text-align: right; margin-top: 16px; }
+
+  @media (max-width: 640px) {
+    .file, footer .keys { display: none; }
+    #stage .cm-line { padding: 0 12px; }
+    button { padding: 4px 8px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <span id="live" class="tag">○ idle</span>
+  <span class="file">set_01.js</span>
+  <span class="spacer"></span>
+  <button id="play" title="Ctrl+Enter">▶ play / update</button>
+  <button id="stop" title="Ctrl+.">■ stop</button>
+  <button id="open" title="Open this code in the full Strudel REPL">↗ strudel.cc</button>
+  <button id="full" title="Fullscreen">⛶</button>
+  <button id="help" title="Cheat sheet">?</button>
+</header>
+
+<main id="stage">
+<strudel-editor id="repl"><!--
+// set_01 · a DJ_Dave-style starter, made with Strudel
+// Ctrl+Enter = play / update      Ctrl+. = stop
+// Ctrl+/ turns a line on or off. That's the performance:
+// start with the kick, then bring parts in one at a time.
+
+setcpm(140/4)  // 140 bpm, 4 beats per cycle
+samples('github:tidalcycles/dirt-samples')
+
+// == drums ==
+$: s("bd*4").bank("RolandTR909")
+$: s("~ cp ~ cp").bank("RolandTR909").room(.2)
+$: s("hh*8").bank("RolandTR909").gain("[.25 .5]*4")
+// $: s("~ oh").fast(4).bank("RolandTR909").gain(.3)
+
+// == bass: root + octave bounce. drag the slider to open the filter ==
+$: n("<[0 7]*4 [-2 5]*4 [2 9]*4 [-1 6]*4>").scale("E2:minor")
+  .s("sawtooth").lpf(slider(900, 200, 4000)).lpenv(2)
+  .decay(.15).sustain(0).gain(.8)
+  ._punchcard()
+
+// == chords: Em C G D, 3-3-2 stabs ==
+$: n("<[0,2,4] [-2,0,2] [2,4,6] [-1,1,3]>").scale("E4:minor")
+  .struct("x ~ ~ x ~ ~ x ~")
+  .s("supersaw").decay(.25).sustain(.2).room(.5).gain(.45)
+  ._pianoroll()
+
+// == vocal chops: cut a vocal into 8 slices, play random slices ==
+// drop your own vocal file on this page, then swap "bev" for its name
+// $: s("bev").slice(8, irand(8).segment(8)).clip(1).room(.3).gain(.8)
+
+// == visuals: uncomment both lines for a Hydra layer behind the code ==
+// await initHydra()
+// osc(4, .1, 1.2).kaleid(H("<4 6 8 5>")).modulate(noise(2), .1).color(.2, .4, 1).out()
+--></strudel-editor>
+</main>
+
+<footer>
+  <span class="keys">Ctrl+Enter play/update · Ctrl+. stop · Ctrl+/ toggle line · Alt+W / Alt+Q jump between $: blocks · drop audio files to load your own sounds</span>
+  <span class="spacer"></span>
+  <a href="https://strudel.cc" target="_blank" rel="noopener">made with Strudel (AGPL-3.0)</a>
+</footer>
+
+<div id="err" hidden></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="drop">drop audio files<br />they become sounds you can play with s("name")</div>
+
+<dialog id="cheats">
+  <h2>Cheat sheet</h2>
+  <h3>Mini-notation (inside "double quotes")</h3>
+  <table>
+    <tr><td>"bd sd hh sd"</td><td>steps share one cycle (one bar) evenly</td></tr>
+    <tr><td>"hh*8" &nbsp; "bd/2"</td><td>repeat faster / play slower</td></tr>
+    <tr><td>"bd [sd sd]"</td><td>[ ] squeezes a group into one step</td></tr>
+    <tr><td>"&lt;c e g&gt;"</td><td>one value per cycle, taking turns</td></tr>
+    <tr><td>"bd, hh*4"</td><td>comma plays layers at the same time</td></tr>
+    <tr><td>"~"</td><td>a rest</td></tr>
+    <tr><td>"bd(3,8)"</td><td>Euclidean rhythm: 3 hits spread over 8 steps</td></tr>
+    <tr><td>"hh?" &nbsp; "bd@3"</td><td>maybe play it / make it 3 steps long</td></tr>
+    <tr><td>"hh:2"</td><td>pick variation 2 of a sample</td></tr>
+  </table>
+  <h3>Sound</h3>
+  <table>
+    <tr><td>s("bd").bank("RolandTR909")</td><td>samples and drum machines</td></tr>
+    <tr><td>note("c3 e3") &nbsp; n("0 2 4").scale("E:minor")</td><td>pitches by name or by scale step</td></tr>
+    <tr><td>.s("sawtooth" | "supersaw" | "piano")</td><td>synths and instruments</td></tr>
+    <tr><td>.lpf(800) .lpenv(2) .room(.5) .delay(.25) .gain(.8)</td><td>filter, filter envelope, reverb, echo, volume</td></tr>
+    <tr><td>.attack(.01) .decay(.2) .sustain(.5) .release(.3)</td><td>envelope</td></tr>
+    <tr><td>slider(900, 200, 4000)</td><td>drag-able number right in the code</td></tr>
+    <tr><td>.fast(2) .slow(2) .rev() .jux(rev)</td><td>time tricks</td></tr>
+    <tr><td>.sometimes(x =&gt; x.speed(2)) .degradeBy(.3)</td><td>controlled randomness</td></tr>
+  </table>
+  <h3>Performing</h3>
+  <table>
+    <tr><td>$: pattern</td><td>each $: block plays at the same time</td></tr>
+    <tr><td>_$: pattern</td><td>mute a block without deleting it</td></tr>
+    <tr><td>setcpm(140/4)</td><td>tempo: bpm / 4</td></tr>
+    <tr><td>s("bev").slice(8, irand(8).segment(8))</td><td>vocal chops: 8 slices, random order</td></tr>
+  </table>
+  <h3>Visuals</h3>
+  <table>
+    <tr><td>._punchcard() ._pianoroll()</td><td>note display under that line</td></tr>
+    <tr><td>._scope() ._spectrum() ._spiral()</td><td>oscilloscope, spectrum, spiral</td></tr>
+    <tr><td>.punchcard() (no underscore)</td><td>draws full screen behind the code</td></tr>
+    <tr><td>.color("cyan magenta")</td><td>color the highlights</td></tr>
+    <tr><td>await initHydra() + osc(10).out()</td><td>Hydra shader visuals; H("&lt;4 8&gt;") feeds a pattern into them</td></tr>
+  </table>
+  <form method="dialog"><button>close</button></form>
+</dialog>
+
+<script>
+  // Editor look. Any Strudel theme name works here: bluescreen, blackscreen,
+  // whitescreen, teletext, algoboy, sonicPink, CutiePi, dracula, tokyoNight...
+  const LOOK = {
+    theme: 'bluescreen',
+    fontSize: 22,
+    fontFamily: '"JetBrains Mono", Consolas, ui-monospace, monospace',
+    isLineNumbersDisplayed: false,
+    isPatternHighlightingEnabled: true,
+    isFlashEnabled: true,
+  };
+
+  const repl = document.getElementById('repl');
+  const $ = (id) => document.getElementById(id);
+
+  for (const [key, value] of Object.entries(LOOK)) repl.editor.changeSetting(key, value);
+
+  // The component can read its starter code before the browser has parsed it, so load it here too.
+  if (!repl.editor.code) repl.editor.setCode(repl.innerHTML.replace('<!--', '').replace('-->', '').trim());
+
+  $('play').onclick = () => repl.editor.evaluate();
+  $('stop').onclick = () => repl.editor.stop();
+  $('help').onclick = () => $('cheats').showModal();
+  $('full').onclick = () =>
+    document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+
+  // Same URL format strudel.cc uses for its own links: base64 of the code in the hash.
+  $('open').onclick = () => {
+    const bytes = new TextEncoder().encode(repl.editor.code);
+    let binary = '';
+    for (const b of bytes) binary += String.fromCharCode(b);
+    window.open('https://strudel.cc/#' + encodeURIComponent(btoa(binary)), '_blank', 'noopener');
+  };
+
+  repl.addEventListener('update', (e) => {
+    const state = e.detail;
+    document.body.classList.toggle('live', !!state.started);
+    $('live').classList.toggle('on', !!state.started);
+    $('live').textContent = state.started ? '● live' : '○ idle';
+    const err = state.error;
+    $('err').hidden = !err;
+    $('err').textContent = err ? String(err.message || err) : '';
+  });
+
+  let toastTimer;
+  function toast(msg) {
+    $('toast').textContent = msg;
+    $('toast').classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => $('toast').classList.remove('show'), 5000);
+  }
+
+  // Drop audio files anywhere to turn them into sounds, e.g. "My Vocal.wav" -> s("my_vocal").
+  // Listeners run in the capture phase so the code editor never tries to paste the file as text.
+  const AUDIO_EXT = /\.(wav|mp3|ogg|flac|m4a|aac|aif|aiff|webm)$/i;
+  const hasFiles = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
+  const soundName = (file) => {
+    let name = file.replace(/\.[^.]+$/, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (!name) name = 'sound';
+    return /^\d/.test(name) ? 's_' + name : name;
+  };
+  let dragDepth = 0;
+  addEventListener('dragenter', (e) => {
+    if (!hasFiles(e)) return;
+    dragDepth++;
+    document.body.classList.add('dragging');
+  }, true);
+  addEventListener('dragleave', (e) => {
+    if (!hasFiles(e)) return;
+    if (--dragDepth <= 0) {
+      dragDepth = 0;
+      document.body.classList.remove('dragging');
+    }
+  }, true);
+  addEventListener('dragover', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+  addEventListener('drop', async (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepth = 0;
+    document.body.classList.remove('dragging');
+    const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('audio/') || AUDIO_EXT.test(f.name));
+    if (!files.length) return toast('No audio files in that drop.');
+    await loadSounds(files);
+  }, true);
+
+  async function loadSounds(files) {
+    await repl.editor.prebaked; // Strudel's sound engine finishes loading first
+    const map = {};
+    for (const f of files) map[soundName(f.name)] = URL.createObjectURL(f);
+    await window.samples(map);
+    toast('Loaded ' + Object.keys(map).map((n) => `s("${n}")`).join('  ') + '. Press Ctrl+Enter after using it.');
+    return Object.keys(map);
+  }
+</script>
+</body>
+</html>
