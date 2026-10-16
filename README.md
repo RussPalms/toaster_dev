@@ -37,7 +37,7 @@ These are the keys as they come; every one can be changed in the help (**?**): c
 | R | orb, over whichever background is picked (or none): after libraries.dev's Thinking Orbs, a cloud of 2,200 soft dots in 3D that holds a form for 8 bars and then flows, dot by dot, into the next, landing on the phrase's one: a sphere, a crystal (a cube of dots on its corner), orbit paths with their dots running round them and bright particles among them, a staff the bass notes appear on as they're played, a spiral galaxy, a network its signals run through on the hats, a field of waves riding the spectrum, a sphere in slices that turn one a beat and then solve themselves (Thinking Orbs' moves), a globe's lines, a ring, an icosahedron, rings swelling with their bands of the spectrum, a burst of rays, ripples on a disc, and an outline that changes shape on the bar. The kick breathes it out, the clap spins it, the hats send a band of light round it, the bass swells the dots. Timed off the beat like the blocks |
 | P | punchcard blocks on top of whichever background is picked |
 | [ / ] | blocks sync fine-tune: ] if they land after the beat, [ if before (10 ms a press, remembered) |
-| C | webcam behind the code, tinted to the theme. Press again for big eyes: little windows over your face with your eyes and mouth blown up, swelling on the kick (after the segcam effect in DJ_Dave's videos). Again for ASCII: the camera drawn as text (dense characters where it's bright), in place of the ASCII background. Again for off |
+| C | webcam behind the code, tinted to the theme. Press again for big eyes: little windows over your face with your eyes and mouth blown up, swelling on the kick (after lo.fi.sci.fi's segcam effect). Again for ASCII: the camera drawn as text (dense characters where it's bright), in place of the ASCII background. Again for off |
 | (hands) | with the camera on, make a frame with your fingers (each hand an L: index out, the other fingers curled, the thumb wherever) and a window opens between your fingertips showing what's inside through a filter (16 of them: dithered blue and pink, negative, heat camera, the theme's colours and more; the first, keyframes, changes colours on every kick). It's a card with a filter on each side: turn one hand over and its end twists round to show the back; turn the whole card over and the back becomes the front. Flick it edge-on and back, bunch one hand's fingertips together, or wink, for the next filter. Pinch one hand (thumb on index) for a triangle; pinch both together, or open your hands, to close it. Keep your hands a little inside the edges of the picture: the tracker loses a hand that's half out of it |
 | (signs) | with the camera on, hold up a hand sign: ✌️ (two fingers up) for the next theme, 👍 (held a second) to start or stop recording, ✊ (one raised fist; two up, a flex, don't) to hush, 🖐 (an open hand) to come back from it. Each fires once a hold (the header shows the sign while you hold it), and none while the finger frame is open |
 | G | glass: a blob of liquid glass floats over the code and bends it like a lens (after the AIRGLOW visuals by null.mpeg), swelling on the kick |
@@ -63,7 +63,7 @@ choices are remembered between launches, and so are the keys; the camera always 
 
 ## What you'll see in the code
 
-The code is typed the way DJ_Dave performs it: a part that stops gets a `_` in front of its name
+The code is typed the way a live coder performs it: a part that stops gets a `_` in front of its name
 (Strudel's mute) and loses it when it comes back, a part never heard yet stays a comment, and a
 change lands on the next bar line, the way ctrl+enter on the downbeat does (the line flashes, and
 the rest of the code with it). Now and then a closing bracket gets left out: a red error shows,
@@ -128,4 +128,4 @@ How it works inside, and the test songs it's checked against: [docs/how-it-works
 Toaster is MIT licensed ([LICENSE](LICENSE)). It uses Google's MediaPipe (Apache 2.0) for the
 camera; [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) lists everything it uses and the artists
 whose looks it's after. The code it writes is [Strudel](https://strudel.cc). Toaster is an
-independent project, not made by or affiliated with DJ_Dave or the Strudel project.
+independent project, not made by or affiliated with the Strudel project.

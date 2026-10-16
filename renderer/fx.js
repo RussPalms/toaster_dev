@@ -5,7 +5,7 @@
 //   Lasts 8 bars.
 // - XP alerts: real errors (like "couldn't capture audio") use the same message box.
 // - Blue screen: the Windows crash screen, for a moment.
-// - Machine readout: OS, CPU, RAM and screen as a const object, like DJ_Dave's website.
+// - Machine readout: OS, CPU, RAM and screen as a const object.
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const ICONS = ['kick.wav', 'clap.wav', 'vox_chop.wav', 'bassline.js', 'hardcore_software.zip', 'memory_leak.exe', 'airglow.mp3', 'strudel'];

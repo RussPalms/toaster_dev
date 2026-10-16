@@ -1530,7 +1530,7 @@ export function createEngine({ fast, mid, slow, sampleRate: sr }) {
       // the one with the most kick and clap weight (claps count more; they sit on the beat far
       // more reliably than kicks). Just after locking on, if another 16th clearly wins for 2
       // seconds, the beat moves there. After that it takes far more, because a song's beat doesn't
-      // move: in breakbeats and live-coded patterns (DJ_Dave's) the kicks keep shifting between
+      // move: in breakbeats and live-coded patterns the kicks keep shifting between
       // sections and can outweigh the beat for a while, and following them flipped the beat half
       // a beat every 15 to 30 seconds. Then: the last 16 seconds (the latest counting most), a
       // third more weight (half again for half a beat, the usual mix-up), held for 6 seconds.

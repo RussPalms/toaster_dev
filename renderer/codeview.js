@@ -1,5 +1,5 @@
 // The code view. Types each line in like a person would (with the odd typo, fixed with
-// backspace, since DJ_Dave keeps mistakes in the show, and now and then a bracket left out: a red
+// backspace, since a live coder keeps mistakes in the show, and now and then a bracket left out: a red
 // error, then the caret goes back to fix it), lands each change on the next bar line the way
 // ctrl+enter on the downbeat does (the line flashes, the rest of the code with it), and lights up
 // tokens as their notes play. A slider's number slides to a new value instead of being typed, and
