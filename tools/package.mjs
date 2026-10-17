@@ -25,7 +25,9 @@ if (platform === 'darwin') {
   buildIcon();
 }
 
-const packager = path.join(root, 'node_modules', '.bin', 'electron-packager');
+// The packager's own script, run with this Node: node_modules/.bin/electron-packager is a shell
+// script, which Windows can't start without a shell (and through one, cmd mangles the ignores).
+const packager = path.join(root, 'node_modules', '@electron', 'packager', 'bin', 'electron-packager.mjs');
 const ignore = [
   '--ignore=^/dist',
   '--ignore=^/tools',
@@ -59,7 +61,7 @@ if (platform === 'darwin') {
   args.push('--arch=x64', '--icon=build/icon.ico');
 }
 
-run(packager, args);
+run(process.execPath, [packager, ...args]);
 
 // iconutil wants a folder of sizes. Built beside the png, and not shipped on its own:
 // the packager takes the .icns.
