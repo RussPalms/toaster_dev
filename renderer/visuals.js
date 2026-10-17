@@ -625,10 +625,10 @@ export function createWebcam(canvas) {
     return null;
   }
 
-  // Where your face and eyes are, for the close-up pop-ups and the ID card: Windows' face detector
-  // looks a few times a second (via the desktop app) and gives the face's box; the eyes are found
-  // inside it. Smoothed, so close-ups glide instead of jumping. All positions are 0-1 across the
-  // (mirrored) picture.
+  // Where your face and eyes are, for the close-up pop-ups and the ID card: the system's face
+  // detector (Windows' own, or Vision on the Mac) looks a few times a second and gives the
+  // face's box; the eyes are found inside it. Smoothed, so close-ups glide instead of jumping.
+  // All positions are 0-1 across the (mirrored) picture.
   let face = null, seen = 0, asking = false, lastAsk = 0;
   // The eyes, as a pair: two dark spots side by side in the upper half of the face, about as far
   // apart as eyes are, with the lighter bridge of the nose between them. Looking for the pair keeps

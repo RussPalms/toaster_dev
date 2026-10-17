@@ -70,8 +70,9 @@ const segcam = createSegcam($('segcam')); // big eyes
 const gestures = createGestures(); // hand signs: theme, record, hush
 
 // The face for the close-ups and the card: from MediaPipe's face landmarks when they're being
-// tracked (exact), else Windows' face box and the eye finder (visuals.js). Shaped like Windows' box
-// (from just above the eyebrows to just under the mouth), which the close-ups are framed for.
+// tracked (exact), else the system's face box and the eye finder (visuals.js). Shaped like
+// Windows' box (from just above the eyebrows to just under the mouth), which the close-ups
+// are framed for. The Mac helper crops its box to that same shape.
 function meshFace() {
   const f = tracker.face;
   if (!f || !cam.on) return null;
@@ -202,9 +203,12 @@ function freshStart(top = false) {
   glitch();
 }
 
-// System audio: main.js answers this request with Windows loopback audio, so there's no picker.
-// Voice-call processing (echo cancelling, noise suppression, auto gain) is on by default. On music
-// it costs CPU and hurts: noise suppression squashes hats and claps, auto gain flattens the dynamics.
+// System audio: main.js answers this request with the machine's loopback, so there's no picker.
+// On the Mac that's audio only (a Core Audio tap). Windows' loopback rides on a screen source,
+// which this asks for and then drops. Voice-call processing (echo cancelling, noise suppression,
+// auto gain) is on by default. On music it costs CPU and hurts: noise suppression squashes hats
+// and claps, auto gain flattens the dynamics.
+const onMac = () => document.documentElement.classList.contains('darwin');
 const RAW_AUDIO = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
 
 // Each pick of a source takes a ticket: one still opening when another is picked (system audio
@@ -216,11 +220,11 @@ const outdated = (ticket) => ticket !== picking;
 async function useSystem() {
   const ticket = ++picking;
   await ac.resume();
-  const stream = await navigator.mediaDevices.getDisplayMedia({ audio: RAW_AUDIO, video: true });
+  const stream = await navigator.mediaDevices.getDisplayMedia({ audio: RAW_AUDIO, video: !onMac() });
   const track = stream.getAudioTracks()[0];
   if (!track || outdated(ticket)) {
     stream.getTracks().forEach((t) => t.stop());
-    if (!track && !outdated(ticket)) throw new Error('Windows did not hand over any audio.');
+    if (!track && !outdated(ticket)) throw new Error(onMac() ? 'macOS did not hand over any audio.' : 'Windows did not hand over any audio.');
     return;
   }
   await track.applyConstraints(RAW_AUDIO).catch(() => {}); // in case the first request was ignored
@@ -403,7 +407,7 @@ function applyTheme() {
   const cs = getComputedStyle(document.documentElement);
   const get = (name) => cs.getPropertyValue(name).trim();
   col = { bg: rgbOf(get('--bg')), fg: rgbOf(get('--fg')), ink: rgbOf(get('--ink')) };
-  window.nc?.setTitleBar(get('--bg'), get('--fg'));
+  if (!onMac()) window.nc?.setTitleBar(get('--bg'), get('--fg'));
 }
 
 function setVisual(i) {
@@ -546,7 +550,11 @@ function openInStrudel() {
 function cameraTrouble(err) {
   const name = err?.name || '';
   if (name === 'NotFoundError' || name === 'OverconstrainedError') return `No camera found. Plug one in (or switch it on) and press ${K('cam')} again.`;
-  if (name === 'NotAllowedError' || name === 'SecurityError') return `The camera is blocked. In Windows Settings, Privacy, Camera, let desktop apps use the camera, then press ${K('cam')} again.`;
+  if (name === 'NotAllowedError' || name === 'SecurityError') {
+    return onMac()
+      ? `The camera is blocked. In System Settings, Privacy & Security, Camera, allow Toaster (Electron, if this copy is running from source), then press ${K('cam')} again.`
+      : `The camera is blocked. In Windows Settings, Privacy, Camera, let desktop apps use the camera, then press ${K('cam')} again.`;
+  }
   if (name === 'NotReadableError' || name === 'AbortError') return `The camera is busy: another app (Zoom, Teams, OBS...) is probably using it. Close that and press ${K('cam')} again.`;
   return 'Camera: ' + (err?.message || err);
 }
@@ -1156,7 +1164,14 @@ addEventListener('drop', (e) => {
 });
 
 // main.js calls this right after the window loads (as a user gesture, which screen capture needs).
-window.startSystemAudio = () => useSystem().catch((err) => showMenu(`Could not hear your PC's sound (${err?.message || err}). The demo beat, a file or an input still work: pick one below.`));
+window.startSystemAudio = () => useSystem().catch((err) => {
+  const denied = err?.name === 'NotAllowedError' || err?.name === 'NotReadableError';
+  if (onMac() && denied) {
+    showMenu('Could not hear this Mac. In System Settings, Privacy & Security, allow Toaster to record system audio (it is listed as Electron when you run it from source), then quit Toaster and open it again. The demo beat, a file or an input still work.');
+    return;
+  }
+  showMenu(`Could not hear your ${onMac() ? 'Mac' : 'PC'}'s sound (${err?.message || err}). The demo beat, a file or an input still work: pick one below.`);
+});
 
 // For testing from tools/cdp.mjs: lets a script drive the app (e.g. run the demo silently).
 window.__nc = { get artImg() { return artImg; }, eng, state, view, ac, cam, takeover, punch, card, glass, orb, cuts, worlds, tracker, lens, segcam, gestures, setHush, meshFace, openInStrudel, strudelProgram, strudelLink, attach, syncOffset, useDemo, useSystem, useInput, setCalm, setVisual, setBlocks, setOrb, setGlass, toggleLayout, toggleCard, showMenu };
@@ -1165,6 +1180,7 @@ window.__nc = { get artImg() { return artImg; }, eng, state, view, ac, cam, take
 window.nc?.version?.().then((v) => { for (const el of document.querySelectorAll('.ver')) el.textContent = 'v' + v; });
 
 loadSettings();
+$('b-rec').dataset.title = `Record a video of the window, with the sound, into ${onMac() ? 'Movies/Toaster' : 'Videos\\Toaster'}`;
 applyKeys();
 applyTheme();
 setVisual(state.visual);
@@ -1176,6 +1192,7 @@ setGlass(state.glass);
 setCalm(state.calm);
 applyCard();
 // the first time Toaster opens, a word on where to start (it's already listening to the PC)
-if (state.firstRun && window.nc) setTimeout(() => showNotice(`Toaster is listening to whatever your PC plays and writing it as code. ? shows the keys and how it works; ${K('source')} picks another source; ${K('cam')} turns on the camera.`), 2500);
+window.nc?.onFullScreen?.((on) => document.documentElement.classList.toggle('full', !!on));
+if (state.firstRun && window.nc) setTimeout(() => showNotice(`Toaster is listening to whatever your ${onMac() ? 'Mac' : 'PC'} plays and writing it as code. ? shows the keys and how it works; ${K('source')} picks another source; ${K('cam')} turns on the camera.`), 2500);
 requestAnimationFrame(draw);
 if (!window.nc) showMenu('Running outside the desktop app: pick a source.', 'info');
