@@ -124,11 +124,19 @@ const FORMS = {
 // dot's place in pos and how lit it is (0 to 1: bigger and brighter) in lit. t is the orb's own
 // clock (it runs with the tempo), m what the music is doing (see draw).
 const DYN = {
-  // working: the orbit paths (the same eleven), each dot running round its path, every fortieth a
-  // bright particle
+  // working: eleven orbit paths round the middle, each dot running round its path, every fortieth a
+  // bright particle. The paths face evenly spread ways (their axes spread over half a sphere, as
+  // the dots of the sphere are over a whole one): tilted at random, some crowded together and left
+  // gaps, a lumpy tangle.
   orbits() {
-    const r = rng(5), K = 11, tilts = Array.from({ length: K }, () => [r() * Math.PI, r() * TAU]);
-    const cs = tilts.map(([tx, ty]) => [Math.cos(tx), Math.sin(tx), Math.cos(ty), Math.sin(ty)]);
+    const K = 11, axes = Array.from({ length: K }, (_, k) => fibDir(k, 2 * K)); // the top half's
+    // each path's two directions across it: a and b, square to its axis and to each other
+    const ab = axes.map((n) => {
+      const h = Math.abs(n[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+      const a = [h[1] * n[2] - h[2] * n[1], h[2] * n[0] - h[0] * n[2], h[0] * n[1] - h[1] * n[0]], la = Math.hypot(...a);
+      a[0] /= la; a[1] /= la; a[2] /= la;
+      return [a, [n[1] * a[2] - n[2] * a[1], n[2] * a[0] - n[0] * a[2], n[0] * a[1] - n[1] * a[0]]];
+    });
     const speed = Array.from({ length: K }, (_, k) => (0.22 + 0.3 * hashD(k, 3.1)) * (k % 2 ? 1 : -1));
     const pos = new Float32Array(N * 3), lit = new Float32Array(N);
     for (let i = 0; i < N; i++) lit[i] = Math.floor(i / K) % 40 === 0 ? 1 : 0;
@@ -136,9 +144,8 @@ const DYN = {
       pos, lit,
       step(t) {
         for (let i = 0; i < N; i++) {
-          const k = i % K, a = (i / N) * TAU + k + t * speed[k], [ctx, stx, cty, sty] = cs[k];
-          const x = Math.cos(a), z0 = Math.sin(a), y = -z0 * stx, z1 = z0 * ctx;
-          pos[i * 3] = x * cty + z1 * sty; pos[i * 3 + 1] = y; pos[i * 3 + 2] = -x * sty + z1 * cty;
+          const k = i % K, an = (i / N) * TAU + k + t * speed[k], c = Math.cos(an), sn = Math.sin(an), [a, b] = ab[k];
+          pos[i * 3] = a[0] * c + b[0] * sn; pos[i * 3 + 1] = a[1] * c + b[1] * sn; pos[i * 3 + 2] = a[2] * c + b[2] * sn;
         }
       },
     };
@@ -189,10 +196,11 @@ const DYN = {
       },
     };
   },
-  // connecting: a network over the sphere, 42 points (each a small knot of dots) joined to their
-  // nearest by lines of dots, a signal running down one of the lines on every hat
+  // connecting: a network over the sphere, 42 points (each a small knot of dots, lit a little)
+  // joined to their nearest by lines of dots, a signal running down one of the lines on every hat.
+  // (Knots of 14 packed in tight were bright lumps, a third of all the dots.)
   web() {
-    const M = 42, KNOT = 14, SIG = 8, TRAIL = 6, g = Math.PI * (3 - Math.sqrt(5));
+    const M = 42, KNOT = 7, SIG = 8, TRAIL = 6, g = Math.PI * (3 - Math.sqrt(5));
     const nodes = Array.from({ length: M }, (_, i) => { const y = 1 - (2 * (i + 0.5)) / M, rr = Math.sqrt(1 - y * y), a = i * g; return [Math.cos(a) * rr, y, Math.sin(a) * rr]; });
     const edges = [];
     nodes.forEach((a, i) => {
@@ -201,7 +209,7 @@ const DYN = {
     });
     const onArc = (a, b, f, out, o) => { const x = a[0] + (b[0] - a[0]) * f, y = a[1] + (b[1] - a[1]) * f, z = a[2] + (b[2] - a[2]) * f, l = Math.hypot(x, y, z) || 1; out[o] = x / l; out[o + 1] = y / l; out[o + 2] = z / l; };
     const pos = new Float32Array(N * 3), lit = new Float32Array(N), knots = M * KNOT, sig0 = N - SIG * TRAIL, lineN = sig0 - knots;
-    for (let i = 0; i < knots; i++) { const c = nodes[Math.floor(i / KNOT)], d = fibDir(i % KNOT, KNOT); pos.set([c[0] + d[0] * 0.035, c[1] + d[1] * 0.035, c[2] + d[2] * 0.035], i * 3); }
+    for (let i = 0; i < knots; i++) { const c = nodes[Math.floor(i / KNOT)], d = fibDir(i % KNOT, KNOT); pos.set([c[0] + d[0] * 0.03, c[1] + d[1] * 0.03, c[2] + d[2] * 0.03], i * 3); lit[i] = 0.35; }
     // the lines' dots, each line as many as its length wants, evenly along it
     const len = edges.map(([a, b]) => Math.acos(clamp(nodes[a][0] * nodes[b][0] + nodes[a][1] * nodes[b][1] + nodes[a][2] * nodes[b][2], -1, 1))), total = len.reduce((s, l) => s + l, 0);
     let i = knots;
@@ -247,15 +255,22 @@ const DYN = {
     const RINGS = 23, lat = Array.from({ length: RINGS }, (_, r) => -Math.PI / 2 + ((r + 0.5) / RINGS) * Math.PI), w = lat.map(Math.cos), sum = w.reduce((a, b) => a + b, 0);
     const counts = w.map((x) => Math.floor((N * x) / sum));
     counts[Math.floor(RINGS / 2)] += N - counts.reduce((a, b) => a + b, 0);
-    const ringOf = new Int16Array(N), lon = new Float32Array(N), pos = new Float32Array(N * 3), lit = new Float32Array(N);
+    const ringOf = new Int16Array(N), lon = new Float32Array(N), pos = new Float32Array(N * 3), lit = new Float32Array(N), raw = new Float32Array(RINGS), sw = new Float32Array(RINGS);
     let i = 0;
     counts.forEach((n, r) => { for (let j = 0; j < n; j++, i++) { ringOf[i] = r; lon[i] = (j / n) * TAU + r * 0.37; } });
     return {
       pos, lit,
       step(t, dt, m) {
+        // each ring's swell: its band of the spectrum (in between two bands, some of each) and the
+        // wave, then softened with the rings either side, so the outline rolls instead of
+        // stepping ring to ring (as it did with each ring its own nearest band: lumpy)
+        for (let r = 0; r < RINGS; r++) {
+          const f = (r / (RINGS - 1)) * 15, lo = Math.floor(f), band = m.bands[lo] + (m.bands[Math.min(15, lo + 1)] - m.bands[lo]) * (f - lo);
+          raw[r] = clamp(0.35 * Math.sin(t * 2.1 - r * 0.52) + 1.5 * (band - 0.3), -1, 1.2);
+        }
+        for (let r = 0; r < RINGS; r++) sw[r] = 0.25 * raw[Math.max(0, r - 1)] + 0.5 * raw[r] + 0.25 * raw[Math.min(RINGS - 1, r + 1)];
         for (let i = 0; i < N; i++) {
-          const r = ringOf[i], band = m.bands[Math.min(15, Math.round((r / (RINGS - 1)) * 15))];
-          const s = clamp(0.35 * Math.sin(t * 2.1 - r * 0.52) + 1.5 * (band - 0.3), -1, 1.2), rr = 0.92 + 0.11 * s, c = Math.cos(lat[r]);
+          const r = ringOf[i], s = sw[r], rr = 0.93 + 0.07 * s, c = Math.cos(lat[r]);
           pos[i * 3] = Math.cos(lon[i]) * c * rr; pos[i * 3 + 1] = Math.sin(lat[r]) * rr; pos[i * 3 + 2] = Math.sin(lon[i]) * c * rr;
           lit[i] = Math.max(0, s - 0.5) * 0.7;
         }
@@ -528,12 +543,12 @@ export function createOrb(canvas) {
     // the spiral is, so it sits inside the wheel's ring of notes as it does in the wide layout), or
     // null for the middle of the window
     draw(t, eng, col, offset, bandsOf, rect = null) {
-      if (broken) return;
+      if (broken || gl?.isContextLost()) return;
       if (!ready) {
         try {
           if (!prog) build();
           if (broken || !init()) return;
-        } catch (err) { broken = true; console.error('orb:', err); return; }
+        } catch (err) { if (!gl?.isContextLost()) { broken = true; console.error('orb:', err); } return; }
       }
       const dt = clamp(t - last, 0, 0.1);
       last = t;

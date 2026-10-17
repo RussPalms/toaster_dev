@@ -463,8 +463,10 @@ export function createPunchcard(canvas) {
     // Turned off: drop the canvas's memory too.
     clear() { canvas.width = canvas.height = 0; reset(); },
     // offset (seconds) draws that far ahead, to make up for the time it takes to hear,
-    // detect and draw a hit; the [ and ] keys tune it.
-    draw(t, eng, col, offset = 0) {
+    // detect and draw a hit; the [ and ] keys tune it. chips: each block (and the playhead) on a
+    // chip of the theme's panel colour, as the code's lines are over the worlds, whose pictures
+    // can be white enough (the receipt look, a bright planet) to hide white blocks.
+    draw(t, eng, col, offset = 0, chips = false) {
       const [W, H] = fit(canvas);
       const gap = t - last, dt = Math.min(0.1, gap || 0.016);
       last = t;
@@ -530,8 +532,17 @@ export function createPunchcard(canvas) {
         const row = ROW[b.lane] * laneH;
         const y = b.pc === undefined ? row + laneH * 0.3 : row + laneH * (0.85 - b.pc / 14);
         const h = b.pc === undefined ? laneH * 0.4 : laneH / 9;
+        const x = mid + (b.g - vg) * stepW + 1 + pad, w = Math.max(2, b.len * stepW - 2 - 2 * pad);
+        if (chips) {
+          ctx.fillStyle = rgba(col.ink, Math.min(0.75, 0.2 + a * 0.6));
+          ctx.fillRect(x - 2, y + pad - 2, w + 4, h - 2 * pad + 4);
+        }
         ctx.fillStyle = rgba(fg, a);
-        ctx.fillRect(mid + (b.g - vg) * stepW + 1 + pad, y + pad, Math.max(2, b.len * stepW - 2 - 2 * pad), h - 2 * pad);
+        ctx.fillRect(x, y + pad, w, h - 2 * pad);
+      }
+      if (chips) {
+        ctx.fillStyle = rgba(col.ink, 0.6);
+        ctx.fillRect(mid - 3, 0, 6, H);
       }
       ctx.fillStyle = rgba(fg, 0.8);
       ctx.fillRect(mid - 1, 0, 2, H);

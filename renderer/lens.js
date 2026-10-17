@@ -28,7 +28,7 @@ const GRACE_ONE = 1.2; // and while one hand is still there pointing, the other 
 // ascii: characters, as the ASCII camera draws you. purple: a violet wash. film: old sepia film.
 // keyframes: the light mapped to three colours (dark, middle, light), the colours jumping to the
 // next set on every kick (after cal1star's CapCut keyframe portal).
-const FILTERS = [
+export const FILTERS = [
   { name: 'keyframes', edge: '#ffffff' },
   { name: 'thermal', edge: '#ffffff' },
   { name: 'comic', edge: '#ffe63c' },
@@ -50,7 +50,7 @@ const pick = (k) => FILTERS[((k % FILTERS.length) + FILTERS.length) % FILTERS.le
 // the keyframes' colour sets, all dark to light (so a change of set changes the colours, not
 // light for dark: no flash): purple-magenta-green, blue-red-yellow, cyan-lime, magenta-white,
 // heat, teal-cyan, rust-peach, gold
-const KEYS = [
+export const KEYS = [
   ['#2a0055', '#ff2fd0', '#3dff76'], ['#1a1aff', '#ff3030', '#ffe94a'], ['#003318', '#18c8ff', '#c8ff3a'], ['#200040', '#ff3df0', '#f4f4f4'],
   ['#401000', '#ff7a00', '#ffe85a'], ['#003040', '#2ab8c8', '#e8ffff'], ['#2a0a00', '#d8502a', '#fff0d0'], ['#3a2a00', '#c8a040', '#fff2b0'],
 ].map((set) => set.map((c) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16) / 255)));
@@ -77,17 +77,14 @@ void main() {
   gl_Position = vec4(pos.x / size.x * 2.0 - 1.0, 1.0 - pos.y / size.y * 2.0, 0.0, 1.0);
 }`;
 
-const FRAG = `#version 300 es
-precision highp float;
-${FILTERS.map((f, i) => `#define F_${f.name.toUpperCase()} ${i}`).join('\n')}
-in vec2 vP;
-in vec3 vCard;
-flat in float vFace;
+// The filters themselves, shared with the portals (portal.js): the uniforms they read, and
+// look(f, p, uv), filter f's colour at p (on screen, CSS pixels), uv being where that is on the
+// card (0-1 each way).
+export const LOOK_GLSL = `${FILTERS.map((f, i) => `#define F_${f.name.toUpperCase()} ${i}`).join('\n')}
 uniform sampler2D cam;     // what the camera sees in the window's box
 uniform sampler2D glyphs;  // the ASCII characters, light to dense, side by side
 uniform vec4 box;          // that box: x0, y0, x1, y1 (CSS pixels)
 uniform vec2 texel;        // one pixel of the camera's picture, in texture units
-uniform ivec2 filt;        // the filter on the front, and on the back
 uniform vec2 cardSize;     // the card's width and height (CSS pixels)
 uniform vec2 corner[4];    // its corners, round from the top left
 uniform float pulse;       // the kick: 1 on the hit, dying away
@@ -98,7 +95,6 @@ uniform vec3 bg;           // the theme's colours
 uniform vec3 fg;
 uniform vec2 cell;         // an ASCII cell (CSS pixels)
 uniform vec3 keys[3];      // the keyframes' colours now, dark to light
-out vec4 color;
 
 float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 vec2 tex(vec2 p) { return clamp((p - box.xy) / (box.zw - box.xy), 0.0, 1.0); }
@@ -222,7 +218,16 @@ vec3 look(int f, vec2 p, vec2 uv) {
     return clamp(s * (1.0 - 0.6 * pow(length(uv - 0.5) * 1.3, 2.0)) * (0.96 + 0.04 * sin(time * 47.0)) + grain, 0.0, 1.0);
   }
   return c;
-}
+}`;
+
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 vP;
+in vec3 vCard;
+flat in float vFace;
+uniform ivec2 filt;        // the filter on the front, and on the back
+out vec4 color;
+${LOOK_GLSL}
 
 void main() {
   if (vP.x < box.x || vP.y < box.y || vP.x > box.z || vP.y > box.w) discard;
@@ -260,7 +265,7 @@ function isFrame(views, held) {
 // (agustinawaigel_'s todosLosDedosJuntos)? Measured against the hand's size (wrist to the middle
 // finger's knuckle), in 3D if there is 3D.
 const span = (v, i, j) => Math.hypot(v[i][0] - v[j][0], v[i][1] - v[j][1], (v[i][2] || 0) - (v[j][2] || 0));
-const isPinch = (views) => span(views[0], 4, 8) < 0.28 * span(views[0], 0, 9);
+export const isPinch = (views) => span(views[0], 4, 8) < 0.28 * span(views[0], 0, 9);
 const TIPS = [4, 8, 12, 16, 20];
 function isBunch(views) {
   const v = views[0], c = [0, 1, 2].map((k) => TIPS.reduce((s, i) => s + (v[i][k] || 0), 0) / TIPS.length);

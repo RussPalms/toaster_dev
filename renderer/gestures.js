@@ -48,20 +48,19 @@ export function createGestures() {
     // open; wanted: the signs that would do something now. Returns a sign the moment it has been
     // held long enough (once a hold), else null.
     update(t, hands, place, busy, wanted) {
+      if (busy) { held = null; return null; }
       let now = null;
-      if (!busy) {
-        const near = 0.06 * Math.min(innerWidth, innerHeight);
-        const signs = new Set(hands.map((hd) => {
-          const P = hd.points.map(([x, y]) => place(x, y));
-          const s = read(P, hd.world || P, near, hd.points[0][1] < 0.6);
-          return wanted.includes(s) ? s : null;
-        }));
-        signs.delete(null);
-        if (signs.size === 1) [now] = signs; // two hands making different signs: neither
-        // both hands in raised fists is a flex, not a hush (it set the hush off by accident in a
-        // video of flexing for the camera, Oct 15): one fist up hushes
-        if (now === 'fist' && hands.length > 1 && hands.every((hd) => read(hd.points.map(([x, y]) => place(x, y)), hd.world || hd.points.map(([x, y]) => place(x, y)), 0, hd.points[0][1] < 0.6) === 'fist')) now = null;
-      }
+      const near = 0.06 * Math.min(innerWidth, innerHeight);
+      const signs = new Set(hands.map((hd) => {
+        const P = hd.points.map(([x, y]) => place(x, y));
+        const s = read(P, hd.world || P, near, hd.points[0][1] < 0.6);
+        return wanted.includes(s) ? s : null;
+      }));
+      signs.delete(null);
+      if (signs.size === 1) [now] = signs; // two hands making different signs: neither
+      // both hands in raised fists is a flex, not a hush (it set the hush off by accident in a
+      // video of flexing for the camera, Oct 15): one fist up hushes
+      if (now === 'fist' && hands.length > 1 && hands.every((hd) => read(hd.points.map(([x, y]) => place(x, y)), hd.world || hd.points.map(([x, y]) => place(x, y)), 0, hd.points[0][1] < 0.6) === 'fist')) now = null;
       if (now && now === held) seen = t;
       else if (now) { held = now; since = seen = t; fired = false; }
       else if (held && t - seen > GAP) held = null;

@@ -312,11 +312,11 @@ function setUpIpc() {
     endRecording();
     const dir = path.join(app.getPath('videos'), 'Toaster');
     fs.mkdirSync(dir, { recursive: true });
-    const d = new Date(), two = (n) => String(n).padStart(2, '0');
-    const name = `toaster ${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}.${two(d.getMinutes())}.${two(d.getSeconds())}`;
-    const file = path.join(dir, `${name}.${ext === 'webm' ? 'webm' : 'mp4'}`);
-    const out = fs.createWriteStream(file + '.part');
-    recording = { file, out, failed: false };
+    const dotExt = '.' + (ext === 'webm' ? 'webm' : 'mp4');
+    const stem = path.join(dir, `toaster ${stamp()}`);
+    const file = freeBase(stem, [dotExt, dotExt + '.part']) + dotExt;
+    const out = fs.createWriteStream(file + '.part', { flags: 'wx' });
+    recording = { stem, ext: dotExt, file, out, failed: false };
     // The file can't be written (the disk is full, say): tell the page once, which stops the
     // recording and says so, and take no more of it. (Unhandled, the error would end the app.)
     out.on('error', (err) => {
@@ -346,41 +346,77 @@ function setUpIpc() {
   ipcMain.handle('clip:save', (_e, buf, ext) => {
     const dir = path.join(app.getPath('videos'), 'Toaster');
     fs.mkdirSync(dir, { recursive: true });
-    const d = new Date(), two = (n) => String(n).padStart(2, '0');
-    const file = path.join(dir, `toaster drop ${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}.${two(d.getMinutes())}.${two(d.getSeconds())}.${ext === 'webm' ? 'webm' : 'mp4'}`);
-    fs.writeFileSync(file, Buffer.from(buf));
+    const dotExt = '.' + (ext === 'webm' ? 'webm' : 'mp4');
+    const file = freeBase(path.join(dir, `toaster drop ${stamp()}`), [dotExt]) + dotExt;
+    fs.writeFileSync(file, Buffer.from(buf), { flag: 'wx' });
     return file;
   });
+  // The hand log (Ctrl+Shift+H, renderer/handlog.js): lines of JSON (numbers only), in the
+  // settings folder's "hand logs", a file a log, added to every few seconds.
+  let handLog = null;
+  ipcMain.handle('handlog:start', () => {
+    const dir = path.join(app.getPath('userData'), 'hand logs');
+    fs.mkdirSync(dir, { recursive: true });
+    handLog = freeBase(path.join(dir, `hands ${stamp()}`), ['.jsonl']) + '.jsonl';
+    fs.writeFileSync(handLog, '', { flag: 'wx' });
+    return handLog;
+  });
+  ipcMain.handle('handlog:add', (_e, text) => {
+    if (!handLog || typeof text !== 'string' || text.length > 8e6) return false;
+    fs.appendFileSync(handLog, text);
+    return true;
+  });
+  ipcMain.handle('handlog:stop', () => { const file = handLog; handLog = null; return file; });
   // Song export (X): the song as a MIDI file and as Strudel code, side by side in Music\Toaster,
   // named after the song and the time.
   ipcMain.handle('song:save', (_e, name, midi, code) => {
     const dir = path.join(app.getPath('music'), 'Toaster');
     fs.mkdirSync(dir, { recursive: true });
     const safe = String(name || '').replace(/[<>:"/\\|?*\x00-\x1f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 80) || 'song';
-    const d = new Date(), two = (n) => String(n).padStart(2, '0');
-    const base = path.join(dir, `${safe} ${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}.${two(d.getMinutes())}.${two(d.getSeconds())}`);
-    fs.writeFileSync(base + '.mid', Buffer.from(midi));
-    if (typeof code === 'string' && code) fs.writeFileSync(base + '.strudel.js', code, 'utf8');
+    const base = freeBase(path.join(dir, `${safe} ${stamp()}`), ['.mid', '.strudel.js']);
+    fs.writeFileSync(base + '.mid', Buffer.from(midi), { flag: 'wx' });
+    if (typeof code === 'string' && code) fs.writeFileSync(base + '.strudel.js', code, { encoding: 'utf8', flag: 'wx' });
     return base + '.mid';
   });
 }
 
+function stamp(d = new Date()) {
+  const two = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}.${two(d.getMinutes())}.${two(d.getSeconds())}`;
+}
+// A name that doesn't collide with one already on disk (x, x (2), x (3)...), checking every file
+// the save will create (.mid with .strudel.js, a recording with its .part).
+function freeBase(stem, exts) {
+  for (let n = 1; ; n++) {
+    const cand = n === 1 ? stem : `${stem} (${n})`;
+    if (exts.every((e) => !fs.existsSync(cand + e))) return cand;
+  }
+}
+
 // Finishes the file being recorded (also when the app closes mid-recording): what has arrived
 // becomes the video, under its proper name.
-let recording = null;
+let recording = null, endingRec = Promise.resolve(null);
 // (A file that failed partway stays as .part, so it isn't taken for a whole video; and the close
 // never waits more than 5 seconds on a stream that has gone wrong.)
 function endRecording() {
-  if (!recording) return Promise.resolve(null);
-  const { file, out, failed } = recording;
+  if (!recording) return endingRec;
+  const { stem, ext, file, out, failed } = recording;
   recording = null;
   win?.setProgressBar(-1);
   win?.setTitle('Toaster');
-  if (failed) { out.destroy(); return Promise.resolve(fs.existsSync(file + '.part') ? file + '.part' : null); }
-  return new Promise((resolve) => {
+  if (failed) {
+    out.destroy();
+    endingRec = Promise.resolve(fs.existsSync(file + '.part') ? file + '.part' : null);
+    return endingRec;
+  }
+  endingRec = new Promise((resolve) => {
     const timer = setTimeout(() => resolve(file + '.part'), 5000);
-    out.end(() => fs.rename(file + '.part', file, (err) => { clearTimeout(timer); resolve(err ? file + '.part' : file); }));
+    out.end(() => {
+      const dest = fs.existsSync(file) ? freeBase(stem, [ext, ext + '.part']) + ext : file;
+      fs.rename(file + '.part', dest, (err) => { clearTimeout(timer); resolve(err ? file + '.part' : dest); });
+    });
   });
+  return endingRec;
 }
 
 app.whenReady().then(() => {

@@ -78,8 +78,12 @@ void main() {
   outColor = vec4(mix(uBg, uFg, on), 1.0);
 }`;
 
-// ours: the planet drawn in the song's code, the characters in reading order (a grid of the code
-// on screen, made by the worlds), each lit and coloured by the world under it
+// ours: the planet drawn in the song's code, the way ASCII art draws a picture: the characters in
+// reading order (a grid of the code on screen, made by the worlds), but only as many cells printed
+// as the world is bright there (which ones: a fixed hash a cell, so they don't crawl), each in the
+// world's own colour, and the world itself faintly underneath. So the sky stays dark and the planet
+// keeps its shape: it stays a world. (Every cell used to print, the sky lit up to nearly half, and
+// it stopped being one.)
 const CODE = `${PREFIX}
 uniform sampler2D uCode; // the code, a character a cell, white on clear
 uniform vec2 uGrid;      // its columns and rows
@@ -91,10 +95,12 @@ void main() {
   vec2 f = fract(p / uCell);
   vec2 c = (cell + 0.5) * uCell;
   vec3 s = (src(c) + src(c + vec2(uCell.x * 0.3, 0.0)) + src(c - vec2(uCell.x * 0.3, 0.0))) / 3.0;
-  float lv = smoothstep(0.02, 0.45, lum(s));
-  float glyph = texture(uCode, (mod(cell, uGrid) + f) / uGrid).a;
-  vec3 ink = s / max(0.05, max(s.r, max(s.g, s.b))) * (0.6 + 0.4 * lv);
-  outColor = vec4(mix(uBg * 0.18, ink, glyph * (0.45 + 0.55 * lv)), 1.0);
+  float lv = smoothstep(0.05, 0.6, lum(s));
+  float on = step(hashI(ivec2(cell), 11), lv * 1.1);
+  float glyph = texture(uCode, (mod(cell, uGrid) + f) / uGrid).a * on;
+  vec3 ink = min(vec3(1.0), s * (1.3 + 0.7 * lv) + 0.06);
+  vec3 under = mix(uBg * 0.15, src(p), 0.38);
+  outColor = vec4(mix(under, ink, glyph), 1.0);
 }`;
 
 // the Locust Worlds page's: a risograph print (blue, pink and yellow screens, navy line art, off register)
@@ -425,8 +431,27 @@ void main() {
 
 const IRON = [[0, [4, 0, 18]], [.18, [40, 0, 100]], [0.36, [130, 0, 150]], [0.52, [210, 30, 90]], [0.66, [245, 90, 20]], [0.8, [255, 170, 0]], [0.92, [255, 230, 90]], [1, [255, 255, 240]]];
 
+// A look prints on one part of the picture, the planet or the sky, and leaves the other as it is
+// (over both, it washed the two together, and the code's own lines with them). The look's main()
+// becomes lookMain(), and a new main() keeps what it printed to its side of the horizon: uPart, the
+// horizon's circle in px with y up (centre, radius) and the side (1 the planet, -1 the sky, 0
+// both), soft over a pixel or two either side.
+export function onePart(frag) {
+  return frag.replace('out vec4 outColor;', 'vec4 outColor;\nout vec4 lookOut;').replace('void main()', 'void lookMain()') + `
+uniform vec4 uPart;
+void main() {
+  lookMain();
+  float d = length(gl_FragCoord.xy - uPart.xy) - uPart.z;
+  float m = uPart.w == 0.0 ? 1.0 : smoothstep(1.5, -1.5, d * uPart.w);
+  lookOut = vec4(mix(texture(uSrc, gl_FragCoord.xy / uRes).rgb, outColor.rgb, m), 1.0);
+}`;
+}
+
 // key: its name; frag: its shader (none for film); set: its uniforms; needs: the pictures it reads
-// besides the world; overlay: drawn over it on the words' canvas (in CSS px, k: CSS px a design px)
+// besides the world; overlay: drawn over it on the words' canvas (in CSS px, k: CSS px a design px);
+// quilt: no shader here, the worlds draw it themselves (cells: the planet in cells of other worlds);
+// whole: the whole picture, not one part (the screen and the tape bend and shift all of it, so a
+// part would tear at the horizon)
 export const LOOKS = [
   { key: 'film' },
   { key: 'ascii', frag: ASCII, set: { uCell: [13, 22] }, needs: ['glyphs'] },
@@ -437,9 +462,10 @@ export const LOOKS = [
   { key: 'receipt', frag: RECEIPT, set: { uDot: 2.5 }, needs: ['noise'] },
   { key: 'thermal', frag: THERMAL, overlay: thermalOverlay },
   { key: 'night vision', frag: NIGHT, set: { uTube: 0 } },
-  { key: 'crt', frag: CRT, set: { uLine: 4 } },
-  { key: 'vhs', frag: VHS, overlay: vhsOverlay },
+  { key: 'crt', frag: CRT, set: { uLine: 4 }, whole: true },
+  { key: 'vhs', frag: VHS, overlay: vhsOverlay, whole: true },
   { key: 'quadtree', frag: QUAD, set: { uRoot: 256 } },
+  { key: 'cells', quilt: true },
 ];
 
 // the thermal camera's markings: a crosshair, the scale from hot to cold, the palette's name

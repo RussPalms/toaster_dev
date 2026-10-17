@@ -33,4 +33,8 @@ contextBridge.exposeInMainWorld('nc', {
   saveSong: (name, midi, code) => ipcRenderer.invoke('song:save', name, midi, code),
   // Drop clips (J): a finished clip, whole, into Videos\Toaster.
   saveClip: (buf, ext) => ipcRenderer.invoke('clip:save', buf, ext),
+  // The hand log (Ctrl+Shift+H): numbers only, into the settings folder.
+  handLogStart: () => ipcRenderer.invoke('handlog:start'),
+  handLogAdd: (text) => ipcRenderer.invoke('handlog:add', text),
+  handLogStop: () => ipcRenderer.invoke('handlog:stop'),
 });

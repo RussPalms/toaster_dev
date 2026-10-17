@@ -44,7 +44,20 @@ export function createTape() {
       if (!best || best.bars.length < 4) return null;
       const d = best === cur ? down : best.down, off = best.moved;
       const map = new Map(), at = (bar) => { let x = map.get(bar); if (!x) map.set(bar, (x = { parts: {}, chord: null, bass: null })); return x; };
-      for (const r of best.bars) at(Math.round((r.b - off - d) / 4)).parts = r.parts;
+      // A bar recorded before the beat or bar line moved sits k 16ths off the final bar i;
+      // turn a copy of its 16 steps by k (as relabel() did live) so the whole song lines up.
+      const rot = (a, k) => {
+        if (!a) return a;
+        const out = new Array(16);
+        for (let s = 0; s < 16; s++) out[(s + k + 16) % 16] = a[s];
+        return out;
+      };
+      for (const r of best.bars) {
+        const s0 = Math.round((r.b - off - d) * 4), i = Math.round(s0 / 16), k = s0 - 16 * i;
+        const parts = {};
+        for (const [id, v] of Object.entries(r.parts)) parts[id] = v && (id === 'vox' ? { on: rot(v.on, k), tok: rot(v.tok, k) } : rot(v, k));
+        at(i).parts = parts;
+      }
       for (const r of best.harmony) {
         const x = at(Math.floor((r.b - off - d + 2) / 4)); // the bar its middle falls in
         if (r.chord) x.chord = r.chord;

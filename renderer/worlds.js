@@ -9,7 +9,7 @@
 // drops out, the film goes to its title card, dawn over a dark planet with the whole title, until
 // the kick comes back. The terminal world shows the code, the ledger keeps the song's bars, the
 // engraving has the title cut into it.
-import { LOOKS, blueNoise } from './worldlooks.js';
+import { LOOKS, blueNoise, onePart } from './worldlooks.js';
 import { RAMP } from './visuals.js';
 const VERT = `#version 300 es
 in vec2 aPos;
@@ -35,6 +35,17 @@ uniform float uSkyH;     // where the sky gradient ends, design px (0: 1080, as 
 uniform float uStars;
 uniform vec4 uSun;       // a sun behind the horizon: centre (design px), radius, strength (0 for none)
 uniform vec4 uGlow;      // light along the horizon: colour, strength
+uniform vec4 uBand;      // the galaxy's band: strength (0 for none), its tilt from straight up (radians), where it rises from the horizon (design px across), its core's height up it (design px)
+uniform float uSkySeed;  // the sky's own draw: where its stars and clouds fall
+uniform int uPass;       // 1: only the band, into a picture of its own (it holds still through the shot, so it's drawn once a shot)
+uniform sampler2D uTexSky;
+uniform float uQuilt;      // 1: the cells look (the planet in cells of the worlds around it)
+uniform int uQuiltIds[6];  // the other worlds its cells show
+uniform int uPrevWorld;    // the world the shot before showed (the cells turn over from it)
+uniform float uCutSeed;    // a new cut each shot
+uniform float uAge;        // seconds into the shot
+uniform float uBeat;       // a beat, seconds
+uniform float uCalm;       // 1 with fewer flashes: the cells slide slower
 uniform vec3 uZoom;      // the camera pushing in: focus (design px), factor
 uniform vec4 uAct;       // the board: signals on the traces (x), status lights amber rather than lime (y), their brightness (z)
 uniform float uHit;      // the music's light: how hard the last hit was, fading (lifts the rim and the glitter)
@@ -68,10 +79,97 @@ vec3 voro(vec2 p) {
   return vec3(sqrt(d1), sqrt(d2) - sqrt(d1), id);
 }
 vec3 pal(float t, vec3 a, vec3 b, vec3 c, vec3 d) { return a + b * cos(TAU * (c * t + d)); }
-float stars(vec2 p, float density) {
-  vec2 g = floor(p / 3.0); float h = h21(g);
-  vec2 f = fract(p / 3.0) - 0.5;
-  return step(1.0 - density, h) * smoothstep(0.45, 0.0, length(f)) * (0.35 + 0.65 * h21(g + 7.0));
+
+// The night sky as a long exposure from orbit has it (the numbers from star counts and photographs
+// of the sky). Stars: their brightness drawn from a power law (each magnitude fainter, about three
+// times as many), so a few stand out and most are a fine dust; their colours as a camera sees them,
+// never more than pale: a few blue-white, most white to cream, the rest pale gold and pale orange,
+// the fainter the greyer. Each is a Gaussian 0.6 to 0.7 of a pixel wide wherever the camera is, its
+// light adding up the same wherever it falls between pixels, so the stars hold still as the camera
+// pushes in (a smaller dot would shimmer).
+vec3 starTint(float k, float b) {
+  vec3 c = k < 0.04 ? vec3(0.69, 0.79, 1.0) : k < 0.17 ? vec3(0.79, 0.86, 1.0) : k < 0.41 ? vec3(0.91, 0.95, 1.0)
+         : k < 0.65 ? vec3(1.0, 0.97, 0.93) : k < 0.83 ? vec3(1.0, 0.91, 0.77) : vec3(1.0, 0.84, 0.63);
+  return mix(vec3(1.0), c, clamp(b * 1.6, 0.3, 1.0));
+}
+// one layer: a cell (design px) holds a star with chance keep, well inside it; its peak brightness
+// at least lo, a Pareto draw (a = 1.2: three times as many per magnitude) up to hi. halo: for the
+// brightest, the little of their light a lens scatters around them, falling off about as 1/r^2
+// (a Moffat profile, px: one picture pixel) and cut off a dozen pixels out. blue: above 1, the
+// layer's colours lean blue-white (the brightest stars of a night sky are mostly hot ones).
+vec3 starLayer(vec2 p, float cell, float keep, float lo, float hi, float sig, float px, float halo, float blue, float seed) {
+  vec2 g = floor(p / cell);
+  if (h21(g + seed) > keep) return vec3(0.0);
+  vec2 d = p - g * cell - (0.22 + 0.56 * h22(g + seed + 3.7)) * cell;
+  float b = min(hi, lo * pow(max(h21(g + seed + 9.1), 1e-3), -0.83));
+  float r2 = dot(d, d);
+  float e = exp(-r2 / (2.0 * sig * sig));
+  if (halo > 0.0) { float q = r2 / (px * px); e += halo * pow(1.0 + q / 2.25, -1.5) * smoothstep(144.0, 64.0, q); }
+  return starTint(pow(h21(g + seed + 5.3), blue), b) * b * e;
+}
+// The galaxy's band: rising from behind the planet at a tilt; across it bright down the middle with
+// a long faint skirt; clouds of stars along it (the noise stretched three times along the band);
+// dust in lanes, ridged noise warped once, close to its middle, and a rift wandering down it, the
+// dust dimming what's behind to about half and reddening it, never to black; blue-white along the
+// arms, warm at the core, and here and there a faint pink glow of hydrogen. dens: how much it
+// crowds the faint stars in (they thin where the dust is).
+vec3 galaxy(vec2 p, out float dens) {
+  dens = 0.0;
+  vec2 dir = vec2(sin(uBand.y), -cos(uBand.y)), nrm = vec2(cos(uBand.y), sin(uBand.y));
+  vec2 r = p - vec2(uBand.z, uCircle.y - uCircle.z);
+  float u = dot(r, dir), v = dot(r, nrm), s = uSkySeed;
+  float w = 170.0 * (0.8 + 0.45 * vn(vec2(u / 650.0, s)));
+  float x = v / w;
+  float prof = 0.93 * exp(-x * x * 1.4) + 0.07 * exp(-x * x * 0.12);
+  if (prof < 0.012) return vec3(0.0);
+  vec2 q = vec2(u / 270.0, v / 90.0) + s * 3.1;
+  float c1 = fbm(q, 4);
+  float lum = prof * (0.25 + 1.5 * c1 * c1) * (0.85 + 0.3 * fbm(q * 3.3 + 5.0, 3));
+  vec2 wq = q * 1.6 + 1.3 * vec2(fbm(q * 1.1 + 2.0, 3), fbm(q * 1.1 + 7.0, 3));
+  float n = (fbm(wq, 4) - 0.5) * 3.0;
+  float lanes = pow(max(1.0 - abs(n), 0.0), 5.0) * exp(-x * x * 2.5);
+  float lane = (fbm(vec2(u / 900.0, s + 1.0), 3) - 0.5) * w * 1.1;
+  float lw = w * (0.12 + 0.22 * fbm(vec2(u / 400.0, s + 3.0), 3));
+  float y = (v - lane) / lw;
+  float rift = exp(-y * y) * (0.6 + 0.4 * fbm(q * 1.7 + 9.0, 4)) * smoothstep(0.25, 0.6, vn(vec2(u / 1100.0, s + 5.0)));
+  float dust = clamp(lanes * 0.85 + rift * 0.9, 0.0, 1.0);
+  // the core: a warm bulge, rounder than the band
+  float cu = (u - uBand.w) / 360.0, cv = v / (w * 1.6);
+  float k = exp(-cu * cu - cv * cv);
+  lum *= 1.0 + 1.8 * k;
+  vec3 col = mix(vec3(0.92, 0.95, 1.0), vec3(1.0, 0.88, 0.7), k) * lum;
+  // hydrogen: a few faint pink clouds strung along it
+  vec2 hc = vec2(u / 210.0, v / 120.0);
+  vec2 hi = floor(hc);
+  vec2 hd = hc - hi - (0.25 + 0.5 * h22(hi + s));
+  float hii = step(0.62, h21(hi + s + 4.0)) * exp(-dot(hd, hd) * 14.0) * (0.5 + fbm(q * 2.5 + 3.0, 3));
+  col += vec3(1.0, 0.5, 0.68) * hii * prof * 0.35;
+  dens = min(1.0, prof) * (1.0 - 0.7 * dust);
+  return col * mix(vec3(1.0), vec3(0.47, 0.42, 0.32), dust) * 0.1;
+}
+// The deep sky over the shot's own: the band from its picture (stored at 2.5 times its light,
+// its pull on the stars in alpha), then the stars. The brighter the sky behind them, the dimmer the
+// band and the faint dust of stars (the exposure is set for the sky); the stars you'd count stay as
+// the world has them.
+vec3 deepSky(vec2 p, vec3 base) {
+  float dens = 0.0;
+  vec3 col = vec3(0.0);
+  float expo = 1.0 / (1.0 + 30.0 * dot(base, vec3(0.2126, 0.7152, 0.0722)));
+  if (uBand.x > 0.0) {
+    vec4 g = texture(uTexSky, vec2(p.x * uScale / uRes.x, 1.0 - p.y * uScale / uRes.y));
+    col = g.rgb / 2.5 * uBand.x * expo;
+    dens = g.a;
+  }
+  if (uStars <= 0.0) return col;
+  float px = 1.0 / (uScale * uZoom.z);   // design px a pixel of the picture
+  float k = uStars / 0.004;              // the shot's draw: 1 is a clear night
+  vec3 st = starLayer(p, 7.0, min(0.9, 0.05 * k * (1.0 + 5.0 * dens)), 0.035, 0.3, 0.6 * px, px, 0.0, 1.0, uSkySeed) * expo;
+  st += starLayer(p, 19.0, min(0.9, 0.2 * k * (1.0 + 1.5 * dens)), 0.2, 1.0, 0.62 * px, px, 0.0, 1.0, uSkySeed + 31.0);
+  st += starLayer(p, 140.0, min(0.9, 0.07 * k), 0.5, 4.0, 0.68 * px, px, 0.08, 1.6, uSkySeed + 67.0);
+  // a soft shoulder rather than a hard clip, so a bright star's core doesn't pulse as it moves
+  // between pixels
+  st = mix(st, 0.7 + 0.3 * (1.0 - exp(-(st - 0.7) / 0.3)), step(0.7, st));
+  return col + st;
 }
 float sdSeg(vec2 p, vec2 a, vec2 b) { vec2 pa = p - a; vec2 ba = b - a; float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0); return length(pa - ba * h); }
 float sdEll(vec2 p, vec2 r) { float k0 = length(p / r); float k1 = length(p / (r * r)); return k0 * (k0 - 1.0) / max(k1, 1e-4); }
@@ -94,7 +192,7 @@ vec3 skyDawn(vec2 frag, float h) {
   vec3 rA; vec3 bA; vec3 gA = dawnPalette(uVar, rA, bA);
   vec3 rD; vec3 bD; vec3 gD = dawnPalette(0, rD, bD);
   vec3 glowA = mix(gA, gD, uBlend); vec3 glowB = mix(bA, bD, uBlend);
-  vec3 col = vec3(0.004, 0.006, 0.013) + stars(frag, 0.0035) * 0.7;
+  vec3 col = vec3(0.004, 0.006, 0.013);
   float hh = max(h, 0.0);
   col += glowA * exp(-hh / 16.0) * 1.05;
   col += glowB * exp(-hh / 150.0) * 0.85;
@@ -814,16 +912,98 @@ vec4 wRipples(vec2 st, vec3 n) {
   return vec4(col, 1.0);
 }
 
+// A world's surface at st: the shot's own, or (in the cells look) a cell showing another world.
+vec4 material(int id, vec2 st, vec3 n, vec3 T, vec3 B, float dl, vec2 frag) {
+  if (id == 0) return wDawn(st, n, dl);
+  if (id == 1) return wCaramel(st, n, T, B);
+  if (id == 2) return wGold(st, n);
+  if (id == 3) return wLeaf(st, n, dl);
+  if (id == 4) return wBlueprint(st, n);
+  if (id == 5) return wMarble(st, n);
+  if (id == 6) return wWing(st, n);
+  if (id == 7) return wEye(st, n, T, B);
+  if (id == 8) return wTerracotta(st, n);
+  if (id == 9) return wLedger(st, n);
+  if (id == 10) return wEngraving(st, n);
+  if (id == 11) return wDunes(st, n, T, B);
+  if (id == 12) return wCode(st, n, frag);
+  if (id == 13) return wThermal(st, n);
+  if (id == 14) return wLace(st, n);
+  if (id == 15) return wPCB(st, n);
+  if (id == 16) return wCutouts(st, n);
+  if (id == 18) return wCrayon(st, n, dl);
+  if (id == 19) return wFuzz(st, n);
+  if (id == 20) return wChitin(st, n, T, B);
+  if (id == 21) return wGlitter(st, n);
+  if (id == 22) return wGlobe(st, n, dl);
+  if (id == 23) return wFeather(st, n);
+  if (id == 25) return wSoil(st, dl);
+  if (id == 26) return wSteppe(st, n, T, B);
+  if (id == 27) return wWheat(st, n);
+  if (id == 28) return wFields(st, n);
+  if (id == 30) return wCitrus(st, n, T, B);
+  if (id == 31) return wHoney(st, n, dl);
+  if (id == 32) return wAgate(st, n);
+  if (id == 33) return wSlick(st, n);
+  if (id == 34) return wDenim(st, n, T, B);
+  if (id == 35) return wStem(st, n, dl);
+  if (id == 36) return wColony(st, n);
+  if (id == 37) return wCrust(st, n, T, B);
+  if (id == 38) return wGlaze(st, n);
+  if (id == 39) return wRipples(st, n);
+  return wBoard(st, n);
+}
+
+// The cells look: the planet cut into rectangles (the screen's, split again and again, the longer
+// side first, a few left big) from just above the horizon down, cut afresh each shot. About half
+// show the shot's own world, the rest the worlds around it in the song (the ones just seen, the
+// ones coming next). At the cut each cell turns from the world before to its own at its own moment
+// within the first beat or so, so the planet goes over in pieces; through the shot each cell's
+// surface slides along like a strip on a belt. Returns the world id; st comes back slid; seam is
+// how much darker the pixel is for the hairline where cells meet.
+int quiltCell(vec2 frag, inout vec2 st, out float seam) {
+  vec2 lo = vec2(0.0, uCircle.y - uCircle.z - 12.0), hi = uRes / uScale;
+  float node = 1.0;
+  for (int L = 0; L < 7; L++) {
+    vec2 sz = hi - lo;
+    if (L >= 2 && h21(vec2(node + 0.5, uCutSeed + 3.0)) < 0.22) break;
+    if (max(sz.x, sz.y) < 90.0) break;
+    float f = 0.25 + 0.5 * h21(vec2(node, uCutSeed + float(L)));
+    if (sz.x * (0.75 + 0.5 * h21(vec2(node, uCutSeed + 11.0))) > sz.y) {
+      float m = lo.x + sz.x * f;
+      if (frag.x < m) { hi.x = m; node = node * 2.0; } else { lo.x = m; node = node * 2.0 + 1.0; }
+    } else {
+      float m = lo.y + sz.y * f;
+      if (frag.y < m) { hi.y = m; node = node * 2.0; } else { lo.y = m; node = node * 2.0 + 1.0; }
+    }
+  }
+  float r = h21(vec2(node, uCutSeed + 21.0)), a = h21(vec2(node, uCutSeed + 22.0)), b = h21(vec2(node, uCutSeed + 23.0));
+  int id = r < 0.45 ? uWorld : uQuiltIds[int(a * 5.999)];
+  if (uAge < b * 0.9 * uBeat) id = uPrevWorld;
+  vec2 dir = h21(vec2(node, uCutSeed + 24.0)) < 0.5 ? vec2(a < 0.5 ? -1.0 : 1.0, 0.0) : vec2(0.0, a < 0.5 ? -1.0 : 1.0);
+  st += dir * (30.0 + 90.0 * b) * mix(1.0, 0.4, uCalm) * uAge / uBeat;
+  float edge = min(min(frag.x - lo.x, hi.x - frag.x), min(frag.y - lo.y, hi.y - frag.y)) * uScale * uZoom.z;
+  seam = mix(0.68, 1.0, smoothstep(0.5, 1.6, edge));
+  return id;
+}
+
 // ---------------------------------------------------------------------------
 void main() {
   vec2 frag = vec2(gl_FragCoord.x, uRes.y - gl_FragCoord.y) / uScale;
+  if (uPass == 1) {
+    float dens;
+    vec3 g = galaxy(frag, dens);
+    outColor = vec4(g * 2.5, dens);
+    return;
+  }
   frag = uZoom.xy + (frag - uZoom.xy) / uZoom.z;
   vec2 c = uCircle.xy; float R = uCircle.z;
   vec2 q = (frag - c) / R;
   float r = length(q);
   float h = (r - 1.0) * R;   // design px above the horizon (negative below)
 
-  vec3 sky = uWorld == 0 ? skyDawn(frag, h) : mix(uSkyA, uSkyB, smoothstep(0.0, uSkyH > 0.0 ? uSkyH : 1080.0, frag.y)) + stars(frag, uStars) * 0.8;
+  vec3 sky = uWorld == 0 ? skyDawn(frag, h) : mix(uSkyA, uSkyB, smoothstep(0.0, uSkyH > 0.0 ? uSkyH : 1080.0, frag.y));
+  if (h > -12.0) sky += deepSky(frag, sky);
   if (uGlow.a > 0.0) {
     float hh = max(h, 0.0);
     sky += uGlow.rgb * uGlow.a * (0.8 * exp(-hh / 30.0) + 0.55 * exp(-hh / 240.0));
@@ -850,45 +1030,10 @@ void main() {
     st += uDrift * uT;
     vec3 T = normalize(vec3(-q.y, q.x, 0.0) + vec3(1e-5));
     vec3 B = normalize(cross(n, T));
-    vec4 s;
-    if (uWorld == 0) s = wDawn(st, n, dl);
-    else if (uWorld == 1) s = wCaramel(st, n, T, B);
-    else if (uWorld == 2) s = wGold(st, n);
-    else if (uWorld == 3) s = wLeaf(st, n, dl);
-    else if (uWorld == 4) s = wBlueprint(st, n);
-    else if (uWorld == 5) s = wMarble(st, n);
-    else if (uWorld == 6) s = wWing(st, n);
-    else if (uWorld == 7) s = wEye(st, n, T, B);
-    else if (uWorld == 8) s = wTerracotta(st, n);
-    else if (uWorld == 9) s = wLedger(st, n);
-    else if (uWorld == 10) s = wEngraving(st, n);
-    else if (uWorld == 11) s = wDunes(st, n, T, B);
-    else if (uWorld == 12) s = wCode(st, n, frag);
-    else if (uWorld == 13) s = wThermal(st, n);
-    else if (uWorld == 14) s = wLace(st, n);
-    else if (uWorld == 15) s = wPCB(st, n);
-    else if (uWorld == 16) s = wCutouts(st, n);
-    else if (uWorld == 18) s = wCrayon(st, n, dl);
-    else if (uWorld == 19) s = wFuzz(st, n);
-    else if (uWorld == 20) s = wChitin(st, n, T, B);
-    else if (uWorld == 21) s = wGlitter(st, n);
-    else if (uWorld == 22) s = wGlobe(st, n, dl);
-    else if (uWorld == 23) s = wFeather(st, n);
-    else if (uWorld == 25) s = wSoil(st, dl);
-    else if (uWorld == 26) s = wSteppe(st, n, T, B);
-    else if (uWorld == 27) s = wWheat(st, n);
-    else if (uWorld == 28) s = wFields(st, n);
-    else if (uWorld == 30) s = wCitrus(st, n, T, B);
-    else if (uWorld == 31) s = wHoney(st, n, dl);
-    else if (uWorld == 32) s = wAgate(st, n);
-    else if (uWorld == 33) s = wSlick(st, n);
-    else if (uWorld == 34) s = wDenim(st, n, T, B);
-    else if (uWorld == 35) s = wStem(st, n, dl);
-    else if (uWorld == 36) s = wColony(st, n);
-    else if (uWorld == 37) s = wCrust(st, n, T, B);
-    else if (uWorld == 38) s = wGlaze(st, n);
-    else if (uWorld == 39) s = wRipples(st, n);
-    else s = wBoard(st, n);
+    float seam = 1.0;
+    int id = uQuilt > 0.5 ? quiltCell(frag, st, seam) : uWorld;
+    vec4 s = material(id, st, n, T, B, dl, frag);
+    s.rgb *= seam;
     s.rgb *= 1.0 + 0.18 * uHit * exp(-dl / 140.0);
     float edge = smoothstep(-0.9, 0.9, -h);
     // the far edge softens into the air, which also keeps it from aliasing
@@ -1027,11 +1172,14 @@ export function pieces(text) {
 
 export function createWorlds(canvas, wordsCanvas) {
   let gl = null, ok = false, worldProg, postProg, loc = {}, post = {}, fbo = null, fboTex = null, fw = 0, fh = 0;
+  // the galaxy's band, drawn once a shot at half the size (smooth enough), and what it was drawn for
+  let skyFbo = null, skyTex = null, skyFor = null;
   const tex = {}; // the code, the ledger and the engraving's mark, as pictures the shader reads
   const pics = { code: makeCanvas(1024), ledger: makeCanvas(1024), mark: makeCanvas(1024) };
   const wctx = wordsCanvas.getContext('2d');
   let shotNow = null, shotAt = 0, cutAt = -9, kickAt = -9, hit = 0, pulse = 0, last = 0, frame = 0;
   let deck = [], rnd = seeded(1), title = '', artist = '', parts = [], partI = 0, partAt = 0, barSeen = null;
+  let calmNow = false, seenIds = []; // fewer flashes, as the last kick had it; the worlds shown lately (newest last)
   let card = true, cardAt = 0, codeText = '', codeAt = -9, ledgerRows = [], ledgerDirty = true, markFor = null;
   let boxOf = null; // where the code is on screen (from the app), for the words to keep clear of it
   // the look: chosen (auto, or one by name), the one printing now, since when; with auto, a drop
@@ -1108,7 +1256,7 @@ export function createWorlds(canvas, wordsCanvas) {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-    loc = Object.fromEntries(['uRes', 'uScale', 'uCircle', 'uT', 'uWorld', 'uVar', 'uBlend', 'uFore', 'uDrift', 'uLight', 'uSkyA', 'uSkyB', 'uSkyH', 'uStars', 'uSun', 'uGlow', 'uZoom', 'uAct', 'uHit', 'uTexCode', 'uTexLedger', 'uTexMark'].map((k) => [k, gl.getUniformLocation(worldProg, k)]));
+    loc = Object.fromEntries(['uRes', 'uScale', 'uCircle', 'uT', 'uWorld', 'uVar', 'uBlend', 'uFore', 'uDrift', 'uLight', 'uSkyA', 'uSkyB', 'uSkyH', 'uStars', 'uSun', 'uGlow', 'uBand', 'uSkySeed', 'uPass', 'uQuilt', 'uQuiltIds', 'uPrevWorld', 'uCutSeed', 'uAge', 'uBeat', 'uCalm', 'uZoom', 'uAct', 'uHit', 'uTexCode', 'uTexLedger', 'uTexMark', 'uTexSky'].map((k) => [k, gl.getUniformLocation(worldProg, k)]));
     post = Object.fromEntries(['uSrc', 'uRes', 'uApex', 'uScale', 'uDof', 'uFrame'].map((k) => [k, gl.getUniformLocation(postProg, k)]));
     tex.code = picture(0, gl.CLAMP_TO_EDGE);
     tex.ledger = picture(1, gl.REPEAT);
@@ -1117,6 +1265,7 @@ export function createWorlds(canvas, wordsCanvas) {
     gl.uniform1i(loc.uTexCode, 0);
     gl.uniform1i(loc.uTexLedger, 1);
     gl.uniform1i(loc.uTexMark, 2);
+    gl.uniform1i(loc.uTexSky, 7);
     gl.useProgram(postProg);
     gl.uniform1i(post.uSrc, 3);
     fw = fh = 0;
@@ -1126,12 +1275,12 @@ export function createWorlds(canvas, wordsCanvas) {
     ok = true;
   }
   // the world is drawn into a picture of its own, which the lens pass reads; with a look, the lens
-  // draws into a second, which the look reads
-  function target() {
+  // draws into a second, which the look reads (and the band into a third, on unit 7)
+  function target(w = fw, h = fh, unit = 3) {
     const tx = gl.createTexture();
-    gl.activeTexture(gl.TEXTURE3);
+    gl.activeTexture(gl.TEXTURE0 + unit);
     gl.bindTexture(gl.TEXTURE_2D, tx);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, fw, fh, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -1146,10 +1295,12 @@ export function createWorlds(canvas, wordsCanvas) {
     if (W === fw && H === fh) return;
     fw = W;
     fh = H;
-    for (const tx of [fboTex, fbo2Tex]) if (tx) gl.deleteTexture(tx);
-    for (const fb of [fbo, fbo2]) if (fb) gl.deleteFramebuffer(fb);
+    for (const tx of [fboTex, fbo2Tex, skyTex]) if (tx) gl.deleteTexture(tx);
+    for (const fb of [fbo, fbo2, skyFbo]) if (fb) gl.deleteFramebuffer(fb);
     [fbo, fboTex] = target();
     [fbo2, fbo2Tex] = target();
+    [skyFbo, skyTex] = target(Math.ceil(W / 2), Math.ceil(H / 2), 7);
+    skyFor = null;
   }
   // a look's program, built the first time it's used, with the pictures it needs
   function lookProg(look) {
@@ -1189,7 +1340,7 @@ export function createWorlds(canvas, wordsCanvas) {
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       }
     }
-    const prog = program(look.frag), locs = new Map();
+    const prog = program(look.whole ? look.frag : onePart(look.frag)), locs = new Map();
     const at = (name) => { if (!locs.has(name)) locs.set(name, gl.getUniformLocation(prog, name)); return locs.get(name); };
     gl.useProgram(prog);
     gl.uniform1i(at('uSrc'), 3);
@@ -1203,7 +1354,7 @@ export function createWorlds(canvas, wordsCanvas) {
     return p;
   }
   canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); ok = false; });
-  canvas.addEventListener('webglcontextrestored', () => { fbo = fboTex = fbo2 = fbo2Tex = null; lookProgs.clear(); for (const k in lookPics) delete lookPics[k]; build(); });
+  canvas.addEventListener('webglcontextrestored', () => { fbo = fboTex = fbo2 = fbo2Tex = skyFbo = skyTex = skyFor = null; lookProgs.clear(); for (const k in lookPics) delete lookPics[k]; build(); });
   build();
 
   // The pictures the shader reads. The terminal: the code as it is now, green on black, the parts'
@@ -1247,10 +1398,12 @@ export function createWorlds(canvas, wordsCanvas) {
       g.fillText(row.bpm, 820, y);
     }
   }
-  // The engraving's mark: the title cut big into the ground, three times, at angles.
+  // The engraving's mark: the title cut big into the ground, three times, at angles (none while the
+  // title is off: it's the title as loud as it gets).
   function paintMark(text) {
     const g = pics.mark.getContext('2d');
     g.clearRect(0, 0, 1024, 1024);
+    if (!text) return;
     g.fillStyle = '#fff';
     g.textAlign = 'center';
     g.textBaseline = 'middle';
@@ -1300,7 +1453,7 @@ export function createWorlds(canvas, wordsCanvas) {
   }
   function shot(w) {
     const glow = w.glow ? [...w.glow] : darkSky(w.sky) && rnd() < 0.4 ? [...GLOWS[Math.floor(rnd() * GLOWS.length)], 0.25 + rnd() * 0.3] : null;
-    return {
+    const s = {
       w,
       ...place(),
       lift: (rnd() - 0.5) * 0.04,
@@ -1313,11 +1466,35 @@ export function createWorlds(canvas, wordsCanvas) {
       stars: w.stars ?? (darkSky(w.sky) ? rnd() * 0.006 : 0),
       v: Math.floor(rnd() * 3),
     };
+    // the sky's own draws, made from the shot's (the song's own draws stay as they were, so its
+    // shots do): where its stars fall, and over most of the space-black worlds the galaxy's band,
+    // rising from behind the planet somewhere along the horizon at a tilt, its core low or high
+    const own = seeded(Math.floor(s.t * 1e6) + s.v);
+    s.seed = own() * 100;
+    if (w.i && (w.sky === SPACE || w.sky === BLACK) && own() < 0.6) {
+      s.band = { x: (own() - 0.5) * 0.8, tilt: (own() < 0.5 ? -1 : 1) * (0.25 + own() * 0.9), core: -150 + own() * 650, k: 0.75 + own() * 0.35 };
+      s.stars = Math.max(s.stars, 0.003);
+    }
+    return s;
   }
   function cut(t) {
+    const prev = shotNow?.w;
     shotNow = shot(nextWorld());
+    quiltFor(shotNow, prev);
     shotAt = cutAt = t;
     card = false;
+  }
+  // For the cells look: the world the shot came from, and the six others its cells may show: the
+  // ones just seen and the ones coming next in the song's order (not the code's or the ledger's,
+  // whose pictures are only painted while they're on), topped up from a few that look good cut up.
+  // None of it draws on the song's generator, so its order of worlds stays as it was.
+  function quiltFor(s, prev) {
+    if (prev && prev !== DAWN) { seenIds = seenIds.filter((i) => i !== prev.i); seenIds.push(prev.i); seenIds = seenIds.slice(-4); }
+    s.prev = prev && prev !== DAWN ? prev.i : s.w.i;
+    const ok = (i) => i && i !== 9 && i !== 12 && i !== s.w.i;
+    const ids = [];
+    for (const i of [...deck.slice(-3).reverse().map((x) => x.i), ...seenIds.slice().reverse(), 32, 38, 1, 15, 5, 6, 30, 22]) if (ok(i) && !ids.includes(i) && ids.length < 6) ids.push(i);
+    s.quiltIds = ids;
   }
   function toCard(t) {
     if (card && shotNow) return;
@@ -1418,6 +1595,7 @@ export function createWorlds(canvas, wordsCanvas) {
     // a kick: the next world (at most once a beat, or a bar with fewer flashes), and its light
     kick(s, t, calm, beat) {
       kickAt = t;
+      calmNow = calm;
       hit = Math.max(hit, 0.5 + 0.5 * Math.min(1, s));
       if (!calm) pulse = Math.max(pulse, 0.5 + 0.5 * Math.min(1, s));
       // never more than about three cuts a second, as the cuts background has it: a new world is
@@ -1437,11 +1615,12 @@ export function createWorlds(canvas, wordsCanvas) {
       lookAuto = pool[Math.floor(rnd() * pool.length)].key;
       lookTill = bar + 8;
     },
-    // One world by name, as if a kick had just cut to it (for looking at them one by one).
-    show(key, t) {
+    // One world by name, as if a kick had just cut to it (for looking at them one by one); over:
+    // any of the shot's draws to set instead (its band, its stars...).
+    show(key, t, over) {
       const w = WORLDS.find((x) => x.key === key) || (key === 'dawn' ? DAWN : null);
       if (!w) return false;
-      if (w === DAWN) { card = false; toCard(t); } else { shotNow = shot(w); shotAt = cutAt = t; card = false; }
+      if (w === DAWN) { card = false; toCard(t); } else { const prev = shotNow?.w; shotNow = { ...shot(w), ...over }; quiltFor(shotNow, prev); shotAt = cutAt = t; card = false; }
       kickAt = t;
       return true;
     },
@@ -1499,7 +1678,7 @@ export function createWorlds(canvas, wordsCanvas) {
         if (text !== codeText && t - codeAt > 0.5) { codeText = text; codeAt = t; paintCode(info.lines); upload(0, tex.code, pics.code); }
       }
       if (w.key === 'ledger' && ledgerDirty) { ledgerDirty = false; paintLedger(); upload(1, tex.ledger, pics.ledger); }
-      if (w.key === 'engraving' && markFor !== title) { markFor = title; paintMark(title || 'toaster'); upload(2, tex.mark, pics.mark); }
+      if (w.key === 'engraving' && markFor !== title) { markFor = title; paintMark(TITLE ? title || 'toaster' : ''); upload(2, tex.mark, pics.mark); }
 
       // sizes: drawn at up to 0.6 megapixels and stretched to fit (it's soft anyway)
       const k = Math.min(1, Math.sqrt(600000 / Math.max(1, innerWidth * innerHeight)));
@@ -1520,10 +1699,31 @@ export function createWorlds(canvas, wordsCanvas) {
       const low = band(eng, 40, 200), level = Math.min(1, (eng.level || 0) * 6);
       const glow = shotNow.glow ? [shotNow.glow[0], shotNow.glow[1], shotNow.glow[2], shotNow.glow[3] * (0.75 + 0.5 * low)] : [0, 0, 0, 0];
       const sun = w.sun ? [U / 2 + w.sun[0], Z - w.sun[1], w.sun[2], 1] : [0, 0, 0, 0];
+      const bd = shotNow.band, milky = bd ? [bd.k, bd.tilt, U / 2 + bd.x * U, bd.core] : [0, 0, 0, 0];
 
+      gl.useProgram(worldProg);
+      // a new shot with the galaxy in it (or a new size): its band, drawn once into its picture
+      // (the picture itself unbound meanwhile: a texture can't be read and drawn into at once)
+      if (bd && skyFor !== shotNow) {
+        const sw = Math.ceil(W / 2), sh = Math.ceil(H / 2);
+        gl.activeTexture(gl.TEXTURE7);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, skyFbo);
+        gl.viewport(0, 0, sw, sh);
+        gl.uniform1i(loc.uPass, 1);
+        gl.uniform2f(loc.uRes, sw, sh);
+        gl.uniform1f(loc.uScale, (C * sw) / W);
+        gl.uniform3f(loc.uCircle, U / 2, Z + Rd, Rd);
+        gl.uniform4f(loc.uBand, ...milky);
+        gl.uniform1f(loc.uSkySeed, shotNow.seed);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.uniform1i(loc.uPass, 0);
+        skyFor = shotNow;
+      }
       gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
       gl.viewport(0, 0, W, H);
-      gl.useProgram(worldProg);
+      gl.activeTexture(gl.TEXTURE7);
+      gl.bindTexture(gl.TEXTURE_2D, skyTex);
       for (const [unit, tt] of [[0, tex.code], [1, tex.ledger], [2, tex.mark]]) { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, tt); }
       gl.uniform2f(loc.uRes, W, H);
       gl.uniform1f(loc.uScale, C);
@@ -1539,9 +1739,22 @@ export function createWorlds(canvas, wordsCanvas) {
       gl.uniform3f(loc.uSkyA, ...rgb(w.sky[0]));
       gl.uniform3f(loc.uSkyB, ...rgb(w.sky[1]));
       gl.uniform1f(loc.uSkyH, Z * 1.8);
-      gl.uniform1f(loc.uStars, shotNow.stars);
+      gl.uniform1f(loc.uStars, w === DAWN ? 0.0035 : shotNow.stars); // the card's as it always was
       gl.uniform4f(loc.uSun, ...sun);
       gl.uniform4f(loc.uGlow, ...glow);
+      gl.uniform4f(loc.uBand, ...milky);
+      gl.uniform1f(loc.uSkySeed, shotNow.seed || 0);
+      // the cells look: the planet in cells of the worlds around it
+      const quilt = !card && !!LOOKS.find((l) => l.key === lookNow)?.quilt && shotNow.quiltIds?.length === 6;
+      gl.uniform1f(loc.uQuilt, quilt ? 1 : 0);
+      if (quilt) {
+        gl.uniform1iv(loc.uQuiltIds, new Int32Array(shotNow.quiltIds));
+        gl.uniform1i(loc.uPrevWorld, shotNow.prev);
+        gl.uniform1f(loc.uCutSeed, shotNow.seed || 0);
+        gl.uniform1f(loc.uAge, t - cutAt);
+        gl.uniform1f(loc.uBeat, beat);
+        gl.uniform1f(loc.uCalm, calmNow ? 1 : 0);
+      }
       gl.uniform4f(loc.uAct, w.act ? 1 : 0, 0, w.act ? 0.5 + 0.5 * level : 0, 0);
       gl.uniform1f(loc.uHit, hit);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -1577,6 +1790,13 @@ export function createWorlds(canvas, wordsCanvas) {
           }
           gl.uniform2f(lp.at('uRes'), W, H);
           gl.uniform1f(lp.at('uScale'), C);
+          // the look on one part: the planet, or the sky when the code sits over the planet (a
+          // tall window), so the code's own lines stay clear of it (the horizon where the push has
+          // it: the circle scaled about the apex)
+          if (!look.whole) {
+            const box = boxOf?.(), overPlanet = box && (box.top + box.bottom) / 2 > Z * (innerWidth / 1920) * zoom;
+            gl.uniform4f(lp.at('uPart'), W / 2, H - (Z + Rd * push) * C, Rd * push * C, overPlanet ? -1 : 1);
+          }
           const seed = (hashText(title || 'toaster') % 997) + 1;
           if (look.riso) {
             // a print's plates never sit quite in register
