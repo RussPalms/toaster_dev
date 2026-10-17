@@ -253,6 +253,7 @@ export function createEngine({ fast, mid, slow, sampleRate: sr }) {
       this.v = Object.fromEntries(PARTS.map((id) => [id, makeVoice(id)]));
       this.onsets = [];
       this.taps = [];
+      this.firstTap = null;
       this.tape?.reset();
       // the whole spectrum's onset strength, frame by frame, for the last 11 seconds (fluxTempo)
       this.fluxT = [];
@@ -263,8 +264,9 @@ export function createEngine({ fast, mid, slow, sampleRate: sr }) {
       // tempo and how many good readings running have agreed on it; fseen: its readings of the
       // last few seconds ({ t, bpm, ok }) (fluxUpdate). drumRun: the drums' readings lately, running
       // at one tempo ({ t, bpm, conf, fit }), clear or not; agreeN, agreeBpm: how many times running
-      // the two readings have agreed, and on what (fluxUpdate)
-      this.tempo = { bpm: 0, shown: 0, P: 0, t0: 0, n0: 0, locked: false, cand: 0, candN: 0, down: 0, downCand: 0, downN: 0, renumber: 0, slotCand: 0, slotN: 0, unclearN: 0, clearAt: -10, fbpm: 0, frun: 0, fseen: [], byFlux: false, drumRun: [], agreeN: 0, agreeBpm: 0 };
+      // the two readings have agreed, and on what (fluxUpdate). better: the drums' last 12 readings
+      // since the lock, the tempo of each that a 3:2 tempo fits better, else 0 (tempoUpdate)
+      this.tempo = { bpm: 0, shown: 0, P: 0, t0: 0, n0: 0, locked: false, cand: 0, candN: 0, down: 0, downCand: 0, downN: 0, renumber: 0, slotCand: 0, slotN: 0, unclearN: 0, clearAt: -10, fbpm: 0, frun: 0, fseen: [], byFlux: false, drumRun: [], agreeN: 0, agreeBpm: 0, better: [] };
       this.kickB = new Float32Array(4);
       this.snareB = new Float32Array(4);
       this.changeB = new Float32Array(4);
@@ -731,10 +733,10 @@ export function createEngine({ fast, mid, slow, sampleRate: sr }) {
         if (t - this.lastCol > 0.125) { this.lastCol = t; this.pushCol(); }
         return;
       }
-      const beatF = T.n0 + (t - T.t0) / T.P;
-      const barF = (beatF - T.down) / 4;
-      const bar = Math.floor(barF), step = Math.floor((barF - bar) * 16), beat = Math.floor(beatF);
+      const beatF = T.n0 + (t - T.t0) / T.P, beat = Math.floor(beatF);
       if (this.beat !== null && beat > this.beat) this.newBeat(beat);
+      const barF = (beatF - T.down) / 4;
+      const bar = Math.floor(barF), step = Math.floor((barF - bar) * 16);
       if (this.bar !== null && bar > this.bar) { this.newBar(this.bar); this.tapeBar(t, bar); }
       if (this.bar === null || bar >= this.bar) { this.bar = bar; this.step = step; this.barF = barF; }
       if (this.beat === null || beat > this.beat) this.beat = beat;
@@ -1152,11 +1154,16 @@ export function createEngine({ fast, mid, slow, sampleRate: sr }) {
       // syllables of talking can pass for a beat here; that's left to the whole sound's tempo
       // (fluxUpdate), which checks for a steady pulse all through.
       const drums = strong.length >= 4;
+      // And how well the hits fit the locked tempo's grid (its double or half, outside the range).
+      let Lf = Lk;
+      while (Lf > 80) Lf /= 2;
+      while (Lf && Lf < 33) Lf *= 2;
+      const heldFit = Lf ? Math.max(fits[Math.floor(Lf)], fits[Math.ceil(Lf)]) : 0;
       // an estimate stuck at the edge of the 75-180 range is usually a double- or half-time reading
-      this.tempoUpdate(t, 6000 / (bestL + delta), conf, bestL <= 33 || bestL >= 80, held > 0 ? best / held : Infinity, drums ? fits[bestL] : 0);
+      this.tempoUpdate(t, 6000 / (bestL + delta), conf, bestL <= 33 || bestL >= 80, held > 0 ? best / held : Infinity, drums ? fits[bestL] : 0, drums ? heldFit : 0);
     },
 
-    tempoUpdate(t, bpm, conf, atEdge, gain = Infinity, fit = 1) {
+    tempoUpdate(t, bpm, conf, atEdge, gain = Infinity, fit = 1, heldFit = 0) {
       const T = this.tempo;
       const near = (x, y) => Math.abs(x - y) / y < 0.035;
       // Double or half the locked tempo is the same beat counted differently.
@@ -1209,6 +1216,28 @@ export function createEngine({ fast, mid, slow, sampleRate: sr }) {
         const mean = held.reduce((a, r) => a + r.bpm, 0) / 6;
         this.lockTo(t, mean, `tempo lock ${mean.toFixed(1)} (the drums held it)`);
       }
+      // Locked at 2/3 or 3/2 of the real tempo: the usual misreading of breakbeats (kicks a beat
+      // and a half apart sound like the beat of a tempo two thirds as fast) and shuffles. Readings
+      // of the real one seldom come clear in such music, so the usual change (6 clear readings)
+      // never comes: I Must Apologise (drum & bass at 157) locked at 103 and stayed a minute
+      // (Oct 16), while the drums read 157 every few seconds, the hits fitting its grid about
+      // twice as well. So a sure reading at 3:2 or 2:3 of the locked tempo (within 6%) whose grid
+      // the hits fit 1.5 times as well or more, in 6 of the drums' last 12 readings, changes it.
+      // Only 3:2: other ratios come from odd bars and fills (Take Five, in 5/4, read at 3/5 and
+      // 3/4 of its tempo for seconds on end; Dancin at 4/5). Replayed on the onset logs of 20
+      // songs and 36 test runs at three timings, locked as heard, at the right tempo or at a 3:2
+      // one: no right tempo moved, and wrong ones came right (I Must Apologise after 11-14 s).
+      if (T.locked && !T.tapped && fit > 0) {
+        const at32 = [1.5, 2 / 3].some((r) => Math.abs(bpm / T.bpm - r) / r < 0.06);
+        const better = at32 && !atEdge && conf >= 0.6 && fit >= 0.1 && fit >= 1.5 * heldFit;
+        T.better.push(better ? bpm : 0);
+        if (T.better.length > 12) T.better.shift();
+        const same = better ? T.better.filter((b) => b && near(b, bpm)) : [];
+        if (same.length >= 6) {
+          const mean = same.reduce((a, b) => a + b, 0) / same.length;
+          this.lockTo(t, mean, `tempo change ${T.bpm.toFixed(1)} -> ${mean.toFixed(1)} (the hits fit it better)`);
+        }
+      }
       if (T.locked) this.updatePhase(t);
     },
 
@@ -1257,7 +1286,8 @@ export function createEngine({ fast, mid, slow, sampleRate: sr }) {
     // many taps there are so far.
     tap(t) {
       const taps = (this.taps ||= []);
-      if (taps.length && t - taps[taps.length - 1] > 2) taps.length = 0;
+      if (taps.length && t - taps[taps.length - 1] > 2) { taps.length = 0; this.firstTap = null; }
+      if (this.firstTap == null) this.firstTap = t;
       taps.push(t);
       if (taps.length > 8) taps.shift();
       if (taps.length < 4) return taps.length;
@@ -1270,7 +1300,7 @@ export function createEngine({ fast, mid, slow, sampleRate: sr }) {
       T.byFlux = false;
       T.tapped = true;
       // beat numbers count back from the last tap (0): the first tap of the count starts a bar
-      const down = (((1 - taps.length) % 4) + 4) % 4;
+      const down = (((-Math.round((taps[taps.length - 1] - this.firstTap) / T.P)) % 4) + 4) % 4;
       if (down !== T.down) { this.relabel(4 * (down - T.down)); T.down = down; }
       return taps.length;
     },
@@ -1295,6 +1325,7 @@ export function createEngine({ fast, mid, slow, sampleRate: sr }) {
         this.keyShown = 0;
       }
       T.candN = T.frun = 0;
+      T.better = [];
       // Start learning again, but keep showing the old patterns until new ones settle.
       for (const id of PARTS) {
         const v = this.v[id];

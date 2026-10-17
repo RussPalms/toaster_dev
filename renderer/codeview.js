@@ -13,7 +13,9 @@ const NEAR = {
 };
 const TYPO_CHANCE = 0.03;
 // A slip (a closing ) or " left out, an error, then fixed): a chance on an edit to a code line,
-// but never within 45 seconds of the last one, or the show is all errors (lines change often)
+// but never within 45 seconds of the last one, or the show is all errors (lines change often).
+// None while recording or saving drop clips (slipsOff, from the app): in a video, people who don't
+// know the show see a red error box with nothing to say it's staged, and take it for a bug.
 const SLIP_CHANCE = 0.03, SLIP_GAP = 45;
 let lastSlip = -Infinity; // when the last slip was (seconds)
 const SLIP_LINES = new Set(['bd', 'sd', 'hhc', 'hho', 'bassline', 'chords', 'vox']);
@@ -59,6 +61,7 @@ const unslid = (text) => text.replace(/slider\(-?[\d.]+/g, 'slider(#');
 const sliderAt = (p) => clamp((parseFloat(p.text.slice(7)) - p.slider[0]) / (p.slider[1] - p.slider[0]), 0, 1).toFixed(3);
 
 export function createCodeView(ids) {
+  let slipsOff = false;
   const lines = Object.fromEntries(ids.map((id) => [id, {
     id, el: document.getElementById('ln-' + id), shown: '', target: '', parts: null, targetParts: null,
     spans: [], want: '', wantSince: 0,
@@ -133,7 +136,7 @@ export function createCodeView(ids) {
     // now and then a slip: the last ) (or ") of what's typed left out until the error shows
     let slip = -1;
     const now = performance.now() / 1000;
-    if (SLIP_LINES.has(L.id) && !b.startsWith('//') && !b.startsWith('_') && add.length > 6 && now - lastSlip > SLIP_GAP && Math.random() < SLIP_CHANCE) {
+    if (!slipsOff && SLIP_LINES.has(L.id) && !b.startsWith('//') && !b.startsWith('_') && add.length > 6 && now - lastSlip > SLIP_GAP && Math.random() < SLIP_CHANCE) {
       slip = add.lastIndexOf(')');
       if (slip < 0) slip = add.lastIndexOf('"');
       if (slip >= 0) lastSlip = now;
@@ -214,6 +217,20 @@ export function createCodeView(ids) {
 
   return {
     lines,
+    get slipsOff() { return slipsOff; },
+    set slipsOff(v) {
+      slipsOff = v;
+      // A slip already planned or showing when recording starts is dropped and finished normally.
+      if (v && typer.cur?.ops.includes('unerror', typer.cur.i)) {
+        const L = lines[typer.cur.id];
+        if (err) err.hidden = true;
+        L.el.classList.remove('slipped');
+        if (!typer.queue.includes(L.id)) typer.queue.unshift(L.id);
+        typer.cur = null;
+        typer.next = 0;
+        render(L);
+      }
+    },
 
     // Ask for a change only once it has held steady, so the code doesn't flicker (now: at once,
     // for a change you made, like a hush).

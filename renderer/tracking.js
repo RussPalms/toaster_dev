@@ -1,7 +1,10 @@
 // Hands and face from the webcam, with Google's MediaPipe (the models are in renderer/models),
-// worked out in track-worker.js so the beat and the drawing never wait for it. About 20 looks a
-// second while there are hands about (or the face is wanted); after 2 seconds without a hand, 8
-// a second, which still catches a hand coming up within a moment. Everything stays on this PC.
+// worked out in track-worker.js so the beat and the drawing never wait for it. A look at every
+// camera frame (about 30 a second) while there are hands about (or the face is wanted): the
+// tracker follows each hand from one look to the next, and looking every frame rather than 20
+// times a second kept both hands of a heart found (100% of looks, against 94-100%) at no cost the
+// main thread could measure; after 2 seconds without a hand, 8 a second, which still catches a
+// hand coming up within a moment. Everything stays on this PC.
 import { createHandSmoother } from './smooth.js';
 
 export function createTracker(on = 'gpu') {
@@ -61,7 +64,7 @@ export function createTracker(on = 'gpu') {
     update(video, wantFace, wantCut = false) {
       if (!worker || !ready || busy || !video || video.readyState < 2) return;
       const now = performance.now();
-      if (now - last < (!wantFace && !wantCut && now - handAt > 2000 ? 125 : 45)) return;
+      if (now - last < (!wantFace && !wantCut && now - handAt > 2000 ? 125 : 33)) return;
       last = now;
       busy = true;
       createImageBitmap(video, { resizeWidth: 640, resizeQuality: 'medium' }).then(

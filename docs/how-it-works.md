@@ -6,7 +6,7 @@ is looked at, how the blocks are timed, the test songs, and how the code is put 
 ## Exporting a song
 
 X saves the song so far, from when the beat was found, two ways, side by side in `Music\Toaster`
-(named after the song and the time):
+on Windows, or `Music/Toaster` on a Mac (named after the song and the time):
 
 - A MIDI file: drums on channel 10 (kick, clap, closed and open hat), the bass line, the chords
   and the lead line on tracks of their own, at the song's tempo. Drop it into a DAW.
@@ -22,7 +22,8 @@ one tempo is the one saved.
 ## Recording
 
 M (or the rec button) records the window as it looks, with the sound, to an MP4 (H.264 and AAC,
-the format TikTok, Shorts and Reels take) in `Videos\Toaster`, named by the date and time. Only
+the format TikTok, Shorts and Reels take) in `Videos\Toaster` on Windows, or `Movies/Toaster` on
+a Mac, named by the date and time. Only
 the page is recorded: no window frame, nothing else on the screen. While it records the header
 and footer hide and so does the mouse pointer over the window (hover the header to get them back
 and reach stop), and the taskbar icon goes red.
@@ -47,18 +48,20 @@ J turns drop clips on, for the first two drops of each song (so a long night doe
 disk; J again starts the count over): from then on the window is recorded the whole time, in overlapping
 stretches (a new one every 10 seconds, each let go at 16 seconds old, so never more than two at
 once), and when a drop hits (or you press D) the stretch that started 6 to 16 seconds before it
-carries on 10 seconds past it and is saved as `toaster drop <date> <time>.mp4`: the build-up and
-the drop, the same picture and sound as M, ready to post. Each stretch is a recording of its own
+carries on 10 seconds past it and is saved as `toaster drop <date> <time>.mp4` beside the other
+recordings: the build-up and the drop, the same picture and sound as M, ready to post. Each stretch is a recording of its own
 from its first frame, so every clip is an ordinary video, nothing cut or stitched together. It
 works alongside M. While it's on, the rec button shows ✂; it costs a video encoder or two running
 all the time, so it's off until you turn it on.
 
 ## The camera
 
-Everything the camera sees stays on this PC. While it's on, two things look at it:
-`helpers/faces.ps1` (Windows' own face detector) finds your face a few times a second for the
-close-up pop-ups and the card, and an eye finder in `renderer/visuals.js` finds your eyes inside
-that box. Google's MediaPipe (`@mediapipe/tasks-vision`, Apache 2.0, with its hand and face
+Everything the camera sees stays on this machine. While it's on, two things look at it:
+`helpers/faces.ps1` on Windows (Windows' own face detector) and `helpers/mac/faces.swift` on a Mac
+(the Vision framework) find your face a few times a second for the close-up pop-ups and the card,
+and an eye finder in `renderer/visuals.js` finds your eyes inside that box. The Mac helper crops
+its box to the same shape Windows returns, from just above the eyebrows to just under the mouth.
+Google's MediaPipe (`@mediapipe/tasks-vision`, Apache 2.0, with its hand and face
 landmark models in `renderer/models`) runs on a thread of its own for the finger frame, hand signs
 and big eyes, and for exact eyes in the close-ups while they're up; with the cut-out (K), its
 selfie segmenter finds where you are in the picture. It looks about 20 times a
@@ -103,9 +106,9 @@ pad, without and with sidechain pumping, for the `.duck()` detection).
   part's steps, bass and chord of each bar, the lead line, block timing, and what each part of the
   app actually fired on.
 - `checks.suite(['house','pop'])`: several songs, one report each (~35 s a song).
-- `checks.beat('boombap')`: block timing in detail; `checks.loopback()`: Windows' capture delay
-  for system audio, with an inaudible probe; `checks.listen(60)`: what it makes of whatever the PC
-  is playing; `checks.lag()`: stalls and costs.
+- `checks.beat('boombap')`: block timing in detail; `checks.loopback()`: the capture delay
+  for system audio, with an inaudible probe; `checks.listen(60)`: what it makes of whatever the
+  machine is playing; `checks.lag()`: stalls and costs.
 - `checks.probe('house')`, `checks.rings('pop')`, `checks.chords('rock')`, `checks.trace('house')`,
   `checks.lockTime('dnb')`: what the detectors see, for working on them.
 
@@ -120,8 +123,9 @@ here would make this app AGPL/GPL too. Nothing from either is in here now.
 
 ## How it's put together
 
-- `main.js` opens the window, answers the page's screen-capture request with Windows loopback
-  audio (no picker), runs `helpers/nowplaying.ps1` for the song title, and reports machine info.
+- `main.js` opens the window, answers the page's capture request with system audio and no picker
+  (Windows loopback on a screen source; on a Mac a Core Audio tap, audio only), runs
+  `helpers/nowplaying.ps1` or `helpers/mac/nowplaying.swift` for the song title, and reports machine info.
 - `renderer/engine.js` listens: kick/clap/hat onsets (a low hit is told apart from a bass note by
   whether its pitch falls and it dies away; hats split closed/open by how fast they die away), the
   tempo (scored on how well each candidate's 16th grid and beats explain the hits, so syncopated,
@@ -163,9 +167,9 @@ soft beat) about 8 to 20 seconds (measured on indie songs played through the PC;
 Marías went from 28 seconds to 8), but one without a steady pulse (a rubato ballad) can stay on
 "finding the beat", because to the app its pulse looks like talking.
 
-Once it has the beat of a song Windows says is still playing, it keeps it through breakdowns and
+Once it has the beat of a song the system says is still playing, it keeps it through breakdowns and
 quiet parts (the parts go dim until they're heard again), and the beat stays put through
-syncopated sections; a new title from Windows, 4 seconds of silence after a pause, or a clear new
+syncopated sections; a new title from the system, 4 seconds of silence after a pause, or a clear new
 tempo starts it over.
 
 ## History

@@ -9,11 +9,14 @@ import { createCard } from './card.js';
 import { createGlass } from './glass.js';
 import { createTracker } from './tracking.js';
 import { createLens } from './lens.js';
+import { createPortal } from './portal.js';
 import { createSegcam } from './segcam.js';
 import { createGestures } from './gestures.js';
+import { createHandLog } from './handlog.js';
 import { createSpiral, createWheel } from './rings.js';
 import { createWarp } from './warp.js';
 import { createWorlds } from './worlds.js';
+import { createChrome } from './chrome.js';
 import { createCuts } from './cuts.js';
 import { createTape, songMidi, songStrudel } from './tape.js';
 import { createClips } from './clips.js';
@@ -22,7 +25,7 @@ import { makeDemo } from './demo.js';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-const VISUALS = ['spectrum', 'tunnel', 'spiral', 'pitchwheel', 'warp', 'cuts', 'worlds', 'rain', 'scope', 'off'];
+const VISUALS = ['spectrum', 'tunnel', 'spiral', 'pitchwheel', 'warp', 'cuts', 'worlds', 'chrome', 'rain', 'scope', 'off'];
 const ON_VIS = ['tunnel', 'spiral', 'pitchwheel', 'cuts']; // the backgrounds drawn on the #vis canvas
 const FIELD_VIS = ['spectrum', 'rain', 'scope']; // and the ones drawn as ASCII, on #field
 const THEMES = ['bluescreen', 'blackscreen', 'terminal', 'pink', 'whitescreen'];
@@ -52,6 +55,7 @@ const tunnel = createTunnel($('vis'));
 const spiral = createSpiral($('vis')), wheel = createWheel($('vis')); // on the tunnel's canvas
 const warp = createWarp($('warp'));
 const worlds = createWorlds($('worlds'), $('worldwords'));
+const chrome = createChrome($('chrome'));
 const cuts = createCuts($('vis')); // on the tunnel's canvas too
 const punch = createPunchcard($('punch')); // its own layer, so it can sit on top of any background
 const cam = createWebcam($('cam'));
@@ -64,14 +68,17 @@ const sys = createSysinfo($('sys'), () => describeAudio());
 const card = createCard($('card'));
 const glass = createGlass($('glass'), $('code'));
 const orb = createOrb($('orb'));
-const LAYERS = ['cam', 'worlds', 'worldwords', 'vis', 'warp', 'field', 'asciicam', 'orb', 'punch'].map($); // the background canvases, bottom first, for the glass
+const LAYERS = ['cam', 'worlds', 'worldwords', 'chrome', 'vis', 'warp', 'field', 'asciicam', 'orb', 'punch'].map($); // the background canvases, bottom first, for the glass
 const lens = createLens($('lens')); // the finger frame
+const portal = createPortal($('portal')); // portals
 const segcam = createSegcam($('segcam')); // big eyes
 const gestures = createGestures(); // hand signs: theme, record, hush
+const handLog = createHandLog(); // Ctrl+Shift+H: the hands as numbers, for tuning
 
 // The face for the close-ups and the card: from MediaPipe's face landmarks when they're being
-// tracked (exact), else Windows' face box and the eye finder (visuals.js). Shaped like Windows' box
-// (from just above the eyebrows to just under the mouth), which the close-ups are framed for.
+// tracked (exact), else the system's face box and the eye finder (visuals.js). Shaped like
+// Windows' box (from just above the eyebrows to just under the mouth), which the close-ups
+// are framed for. The Mac helper crops its box to that same shape.
 function meshFace() {
   const f = tracker.face;
   if (!f || !cam.on) return null;
@@ -85,7 +92,7 @@ function meshFace() {
 const state = {
   source: null, label: '', node: null, stream: null, el: null, demo: null,
   winSong: null, winKey: '', manual: null,
-  visual: 0, strength: 1, blocks: true, orb: false, theme: 0, drop: 0, info: false, vertical: false, glass: false,
+  visual: 0, strength: 1, blocks: true, orb: false, theme: 0, drop: 0, info: false, vertical: false, glass: false, chromeCollage: true,
   mini: false, // the mini player (W): a small window over everything else
   eyes: false, // the camera's third setting: big eyes over your face
   ascii: false, // and its fourth: the camera as text, in place of the ASCII background
@@ -103,7 +110,7 @@ let col = { bg: [5, 29, 181], fg: [255, 255, 255], ink: [2, 11, 69] };
 
 // The look you picked (background and its strength, blocks, orb, card, glass, theme, drop effect)
 // is remembered between launches. The camera always starts off.
-const SAVED = ['keys', 'strength', 'blocks', 'orb', 'card', 'cardV', 'cardBig', 'glass', 'theme', 'drop', 'syncTrim', 'camFx', 'calm', 'worldLook'];
+const SAVED = ['keys', 'strength', 'blocks', 'orb', 'card', 'cardV', 'cardBig', 'glass', 'theme', 'drop', 'syncTrim', 'camFx', 'calm', 'worldLook', 'chromeCollage'];
 function loadSettings() {
   let saved = {};
   try {
@@ -200,11 +207,16 @@ function freshStart(top = false) {
   view.clear();
   takeover.stop();
   glitch();
+  clipsThisSong = 0;
+  lastClipAt = -99;
 }
 
-// System audio: main.js answers this request with Windows loopback audio, so there's no picker.
-// Voice-call processing (echo cancelling, noise suppression, auto gain) is on by default. On music
-// it costs CPU and hurts: noise suppression squashes hats and claps, auto gain flattens the dynamics.
+// System audio: main.js answers this request with the machine's loopback, so there's no picker.
+// On the Mac that's audio only (a Core Audio tap). Windows' loopback rides on a screen source,
+// which this asks for and then drops. Voice-call processing (echo cancelling, noise suppression,
+// auto gain) is on by default. On music it costs CPU and hurts: noise suppression squashes hats
+// and claps, auto gain flattens the dynamics.
+const onMac = () => document.documentElement.classList.contains('darwin');
 const RAW_AUDIO = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
 
 // Each pick of a source takes a ticket: one still opening when another is picked (system audio
@@ -216,11 +228,11 @@ const outdated = (ticket) => ticket !== picking;
 async function useSystem() {
   const ticket = ++picking;
   await ac.resume();
-  const stream = await navigator.mediaDevices.getDisplayMedia({ audio: RAW_AUDIO, video: true });
+  const stream = await navigator.mediaDevices.getDisplayMedia({ audio: RAW_AUDIO, video: !onMac() });
   const track = stream.getAudioTracks()[0];
   if (!track || outdated(ticket)) {
     stream.getTracks().forEach((t) => t.stop());
-    if (!track && !outdated(ticket)) throw new Error('Windows did not hand over any audio.');
+    if (!track && !outdated(ticket)) throw new Error(onMac() ? 'macOS did not hand over any audio.' : 'Windows did not hand over any audio.');
     return;
   }
   await track.applyConstraints(RAW_AUDIO).catch(() => {}); // in case the first request was ignored
@@ -363,12 +375,14 @@ window.nc?.onNowPlaying((info) => {
   state.winKey = key;
   const reset = state.source === 'system' && !state.manual && eng.tempo.locked;
   eng.note(`now playing: ${song.title} | ${song.artist} (${info.app || '?'}, ${info.playing ? 'playing' : 'paused'})${reset ? ' -> reset' : ''}`);
+  if (state.source === 'system') { clipsThisSong = 0; lastClipAt = -99; }
   if (reset) freshStart(true);
 });
 
 eng.on.kick = (s) => {
   field.kick(s); spiral.kick(s); wheel.kick(s); glass.kick(s); segcam.kick(s); takeover.kick();
   lens.kick(s, state.calm);
+  portal.kick(s, state.calm);
   // the ones that punch the whole picture's light (the tunnel's flash, the warp, the camera's and
   // the card's glitches) sit out with fewer flashes on
   if (!state.calm) { tunnel.kick(s); warp.kick(s); cam.kick(s); card.kick(s); }
@@ -376,16 +390,19 @@ eng.on.kick = (s) => {
 };
 // Drop clips: the first two drops of each song (the ones that matter, without a long night of
 // a song that keeps dropping filling the disk). Turning them on again starts the count over.
-let clipsThisSong = 0;
+// A 12 s gap (matching the engine's drop cooldown) keeps D on a real drop from starting a second clip.
+let clipsThisSong = 0, lastClipAt = -99;
 eng.on.drop = () => {
-  if (clipsThisSong < 2 && clips.drop()) { clipsThisSong++; flashStatus('✂ clipping the drop…'); }
-  if (VISUALS[state.visual] === 'worlds') worlds.drop(nowSec(), eng.bar);
+  const t = nowSec();
+  if (clipsThisSong < 2 && t - lastClipAt > 12 && clips.drop()) { clipsThisSong++; lastClipAt = t; flashStatus('✂ clipping the drop…'); }
+  if (VISUALS[state.visual] === 'worlds') worlds.drop(t, eng.bar);
+  if (VISUALS[state.visual] === 'chrome') chrome.splash(state.calm);
   const mode = DROPS[state.drop];
   // a bar's length in seconds; half a second a beat if the tempo isn't known yet
-  if (mode === 'xp takeover') takeover.start(nowSec(), currentSong()?.title, (eng.tempo.P || 0.5) * 4);
+  if (mode === 'xp takeover') takeover.start(t, currentSong()?.title, (eng.tempo.P || 0.5) * 4);
   else if (mode === 'blue screen') showBsod($('bsod'), glitch);
 };
-eng.on.newSong = () => { resetCodegen(); view.clear(); takeover.stop(); glitch(); clipsThisSong = 0; };
+eng.on.newSong = () => { resetCodegen(); view.clear(); takeover.stop(); glitch(); clipsThisSong = 0; lastClipAt = -99; };
 // A known song keeps its beat through breakdowns and quiet parts (see tempoUpdate in engine.js).
 eng.song = () => ({ known: !!currentSong(), playing: state.source === 'system' && !!state.winSong && !!state.winPlaying });
 
@@ -403,16 +420,17 @@ function applyTheme() {
   const cs = getComputedStyle(document.documentElement);
   const get = (name) => cs.getPropertyValue(name).trim();
   col = { bg: rgbOf(get('--bg')), fg: rgbOf(get('--fg')), ink: rgbOf(get('--ink')) };
-  window.nc?.setTitleBar(get('--bg'), get('--fg'));
+  if (!onMac()) window.nc?.setTitleBar(get('--bg'), get('--fg'));
 }
 
 function setVisual(i) {
   state.visual = i;
   const mode = VISUALS[i];
   if (!FIELD_VIS.includes(mode)) field.clear();
-  for (const [name, v] of [['tunnel', tunnel], ['spiral', spiral], ['pitchwheel', wheel], ['warp', warp], ['cuts', cuts], ['worlds', worlds]]) if (mode !== name) v.clear();
+  for (const [name, v] of [['tunnel', tunnel], ['spiral', spiral], ['pitchwheel', wheel], ['warp', warp], ['cuts', cuts], ['worlds', worlds], ['chrome', chrome]]) if (mode !== name) v.clear();
   $('b-visual').textContent = mode + ' ▾';
   document.body.classList.toggle('worlds-on', mode === 'worlds');
+  document.body.classList.toggle('chrome-on', mode === 'chrome');
   applyStage();
   saveSettings();
 }
@@ -426,6 +444,12 @@ function nextWorldLook() {
   state.worldLook = all[(all.indexOf(state.worldLook) + 1) % all.length];
   worlds.setLook(state.worldLook);
   flashStatus('look: ' + state.worldLook);
+  saveSettings();
+}
+// A, while the chrome is on: the collage over it, off and on
+function toggleCollage() {
+  state.chromeCollage = !state.chromeCollage;
+  flashStatus('collage: ' + (state.chromeCollage ? 'on' : 'off'));
   saveSettings();
 }
 function setStrength(i, say) {
@@ -509,13 +533,20 @@ const SIGNS = { peace: '✌️', thumb: '👍', fist: '✊', open: '🖐' };
 let hinted = null;
 function watchSigns(t) {
   const wanted = ['peace', 'thumb', state.hushed ? 'open' : 'fist'];
-  const sign = gestures.update(t, tracker.hands, cam.place, lens.showing, wanted);
+  const sign = gestures.update(t, tracker.hands, cam.place, lens.showing || portal.showing, wanted);
   // a hint in the header while one is held (hidden in a recording, like the rest of the header)
   if (gestures.holding !== hinted) { hinted = gestures.holding; if (hinted) flashStatus(SIGNS[hinted] + ' …'); }
   if (sign === 'peace') { nextTheme(); flashStatus('✌️ ' + THEMES[state.theme]); }
   else if (sign === 'thumb') toggleRecording();
   else if (sign === 'fist') setHush(true);
   else if (sign === 'open') setHush(false);
+}
+
+// Ctrl+Shift+H (not in the help): the hand log (handlog.js), the hands as numbers into the
+// settings folder, for tuning the hand features on real hands.
+async function toggleHandLog() {
+  const file = await handLog.toggle(nowSec());
+  if (file) flashStatus(handLog.on ? 'hand log on' : 'hand log saved');
 }
 
 // X: the song so far, decompiled: a MIDI file (drums, bass, chords, lead) and the whole song as
@@ -546,7 +577,11 @@ function openInStrudel() {
 function cameraTrouble(err) {
   const name = err?.name || '';
   if (name === 'NotFoundError' || name === 'OverconstrainedError') return `No camera found. Plug one in (or switch it on) and press ${K('cam')} again.`;
-  if (name === 'NotAllowedError' || name === 'SecurityError') return `The camera is blocked. In Windows Settings, Privacy, Camera, let desktop apps use the camera, then press ${K('cam')} again.`;
+  if (name === 'NotAllowedError' || name === 'SecurityError') {
+    return onMac()
+      ? `The camera is blocked. In System Settings, Privacy & Security, Camera, allow Toaster (Electron, if this copy is running from source), then press ${K('cam')} again.`
+      : `The camera is blocked. In Windows Settings, Privacy, Camera, let desktop apps use the camera, then press ${K('cam')} again.`;
+  }
   if (name === 'NotReadableError' || name === 'AbortError') return `The camera is busy: another app (Zoom, Teams, OBS...) is probably using it. Close that and press ${K('cam')} again.`;
   return 'Camera: ' + (err?.message || err);
 }
@@ -569,6 +604,8 @@ async function toggleCam() {
     cam.stop();
     tracker.stop();
     lens.clear();
+    portal.clear();
+    document.body.classList.remove('portal-full');
     segcam.clear();
     gestures.reset();
   }
@@ -743,22 +780,25 @@ const REC_TYPES = ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=a
 // what's drawn late for your ears gets the sound held back to match: that, less 12 ms (system
 // audio, drawn 50 ms earlier, lands 12 ms early, which looks in time), and your sync trim.
 const recDelay = () => Math.max(0, heardAfter() - 12 - state.syncTrim) / 1000;
-const rec = { mr: null, video: null, tap: null, busy: false, write: Promise.resolve(), noticeTimer: 0 };
+const rec = { mr: null, video: null, tap: null, busy: false, op: Promise.resolve(), write: Promise.resolve(), noticeTimer: 0 };
 
 async function toggleRecording() {
   if (rec.busy) return;
   rec.busy = true;
-  try {
-    if (rec.mr) await stopRecording();
-    else await startRecording();
-  } catch (err) {
-    console.error('recording:', err);
-    endRecordingTracks();
-    await window.nc?.recStop?.();
-    showNotice('could not record: ' + (err?.message || err));
-  } finally {
-    rec.busy = false;
-  }
+  rec.op = (async () => {
+    try {
+      if (rec.mr) await stopRecording();
+      else await startRecording();
+    } catch (err) {
+      console.error('recording:', err);
+      endRecordingTracks();
+      await window.nc?.recStop?.();
+      showNotice('could not record: ' + (err?.message || err));
+    } finally {
+      rec.busy = false;
+    }
+  })();
+  await rec.op;
 }
 
 // The window's picture as a stream: just the page, at the window's own shape, up to 1920 on the
@@ -829,12 +869,13 @@ function recordingFailed(why) {
   rec.failing = true;
   try { rec.mr.ondataavailable = null; rec.mr.stop(); } catch { /* already stopping */ }
   endRecordingTracks();
-  Promise.resolve(window.nc?.recStop?.()).finally(() => { rec.failing = false; });
+  const stop = Promise.resolve(window.nc?.recStop?.()).finally(() => { rec.failing = false; });
+  rec.op = rec.op.then(() => stop, () => stop);
   showNotice('recording stopped: ' + why);
 }
 // The window is closing mid-recording (main.js asks): finish the video properly, then close.
 window.nc?.onRecFinish?.(async () => {
-  try { if (rec.mr) await toggleRecording(); } finally { window.nc.closeWindow(); }
+  try { await rec.op; if (rec.mr) await toggleRecording(); } finally { window.nc.closeWindow(); }
 });
 window.nc?.onRecFailed?.((why) => recordingFailed(why));
 
@@ -858,7 +899,7 @@ async function toggleClips() {
   if (!window.nc?.saveClip) { flashStatus('drop clips work in the app, not in a browser'); return; }
   try {
     const on = await clips.toggle();
-    if (on) clipsThisSong = 0;
+    if (on) { clipsThisSong = 0; lastClipAt = -99; }
     document.body.classList.toggle('clips-on', on);
     flashStatus(on ? 'drop clips: on (the first two drops of each song, with their build-up)' : 'drop clips: off');
   } catch (err) {
@@ -895,6 +936,7 @@ setInterval(() => {
   const t = nowSec();
   if (state.node) eng.frame(t, ac.currentTime); // the audio clock times the onsets for the tempo
   if (tick++ % 3 === 0) {
+    view.slipsOff = !!rec.mr || clips.on; // (no staged slips in a video: see codeview.js)
     const lines = buildLines(eng, { song: currentSong(), source: state.label || 'nothing yet', hushed: state.hushed }, t);
     view.update(lines, t, state.hushed !== hushWas); // a hush goes in at once
     hushWas = state.hushed;
@@ -910,12 +952,14 @@ const LAYER_ON = {
   warp: () => VISUALS[state.visual] === 'warp',
   worlds: () => VISUALS[state.visual] === 'worlds',
   worldwords: () => VISUALS[state.visual] === 'worlds',
+  chrome: () => VISUALS[state.visual] === 'chrome',
   field: () => FIELD_VIS.includes(VISUALS[state.visual]),
   asciicam: () => cam.on && state.ascii,
   orb: () => state.orb,
   punch: () => state.blocks,
   segcam: () => cam.on && (state.eyes || CAM_FX[state.camFx] === 'windows'),
   lens: () => cam.on,
+  portal: () => cam.on,
 };
 function showLayers() {
   for (const id in LAYER_ON) { const el = $(id), on = LAYER_ON[id](); if (el.hidden === on) el.hidden = !on; }
@@ -957,16 +1001,17 @@ function draw(now) {
     const played = ['bd', 'sd', 'hhc', 'hho'].filter((id) => eng.present(id, t)).map((id) => ({ bd: 'kick', sd: 'clap', hhc: 'hats', hho: 'open hats' })[id]).join(' ');
     worlds.draw(t, eng, { song: currentSong(), lines: Object.values(lineTexts()).filter(Boolean), played, chord: eng.key ? `${NOTES[eng.key.root]} ${eng.key.mode}` : '', codeBox, col });
   }
+  else if (mode === 'chrome') chrome.draw(t, eng, { song: currentSong(), calm: state.calm, collage: state.chromeCollage });
   else if (mode === 'cuts') cuts.draw(t, eng, col, syncOffset(), state.calm, { lines: lineTexts(), cam: cam.frame, art: state.source === 'system' && !state.manual ? artImg : null });
   if (state.orb) orb.draw(t, eng, col, syncOffset(), (out) => bands(eng, out), stageRect());
-  if (state.blocks) punch.draw(t, eng, col, syncOffset());
+  if (state.blocks) punch.draw(t, eng, col, syncOffset(), mode === 'worlds' || mode === 'chrome');
   if (card.shown) card.draw(t, eng, { song: currentSong(), source: state.label, frame: cam.frame, face: meshFace() || cam.face, art: state.source === 'system' && !state.manual ? artImg : null }, col);
   if (t - poolAt > 2) { poolAt = t; field.setPool($('code').textContent); }
   cam.draw(col, camRect(), { mask: tracker.mask, bar: eng.bar });
   if (cam.on) {
     // (the face is looked for while the finger frame is open too: a wink changes its filter)
     const windows = CAM_FX[state.camFx] === 'windows';
-    tracker.update(cam.video, state.eyes || windows || takeover.active || lens.showing, CAM_FX[state.camFx] === 'cut-out');
+    tracker.update(cam.video, state.eyes || windows || takeover.active || lens.showing, CAM_FX[state.camFx] === 'cut-out' || portal.wantsCut);
     // tracking that couldn't start is said (once, and again if it gives up), so the hand effects
     // not working isn't a mystery
     const trouble = tracker.error ? `${tracker.error}|${tracker.gaveUp}` : '';
@@ -975,8 +1020,13 @@ function draw(now) {
       if (trouble) showNotice(tracker.gaveUp ? `Hand and face tracking is off (${tracker.error}). The camera still works; turning it off and on (C) tries again.` : `Hand and face tracking had trouble starting (${tracker.error}); trying again.`);
     }
     const where = { place: cam.place, crop: cam.drawCrop, rect: cam.rect, col };
-    lens.draw(t, { ...where, hands: tracker.hands, eyes: tracker.eyes, bar: eng.bar });
+    // a portal, while one is open, stands in for the finger frame (and the hand signs)
+    portal.draw(t, { ...where, hands: tracker.hands, video: cam.video, mask: tracker.mask, bar: eng.bar });
+    if (portal.showing) lens.clear();
+    else lens.draw(t, { ...where, hands: tracker.hands, eyes: tracker.eyes, bar: eng.bar });
+    if (portal.full !== document.body.classList.contains('portal-full')) document.body.classList.toggle('portal-full', portal.full);
     watchSigns(t);
+    if (handLog.on) handLog.update(t, tracker.hands, { place: cam.place, rect: cam.rect, portal: portal.state, lens: lens.showing, sign: gestures.holding });
     if (state.eyes || windows) segcam.draw(t, { ...where, face: tracker.face, eyes: state.eyes, windows, frame: cam.frame, ascii: state.ascii });
   }
   glass.draw(t, eng, col, LAYERS);
@@ -1030,7 +1080,7 @@ $('rename-form').addEventListener('submit', () => {
 const ACTIONS = [
   { id: 'source', key: 's', run: () => showMenu() },
   { id: 'visual', key: 'v', run: () => setVisual((state.visual + 1) % VISUALS.length) },
-  { id: 'strength', key: 'a', run: () => (VISUALS[state.visual] === 'worlds' ? nextWorldLook() : setStrength((state.strength + 1) % STRENGTHS.length, true)) },
+  { id: 'strength', key: 'a', run: () => (VISUALS[state.visual] === 'worlds' ? nextWorldLook() : VISUALS[state.visual] === 'chrome' ? toggleCollage() : setStrength((state.strength + 1) % STRENGTHS.length, true)) },
   { id: 'blocks', key: 'p', run: () => setBlocks(!state.blocks) },
   // the blocks' timing: earlier if they land after the beat, later if before
   { id: 'later', key: '[', run: () => nudgeSync(-10) },
@@ -1127,7 +1177,9 @@ addEventListener('keydown', (e) => {
 $('keys-reset').onclick = () => { state.keys = {}; saveSettings(); applyKeys(); flashStatus('keys as they came'); };
 
 addEventListener('keydown', (e) => {
-  if (e.target.closest('dialog') || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.target.closest('dialog')) return;
+  if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.code === 'KeyH') { if (!e.repeat) toggleHandLog().catch(showError); return; }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key.toLowerCase();
   if (!visMenu.hidden) { showVisMenu(false); if (k === 'escape') return; }
   if (k === 'escape') { $('menu').hidden = true; $('alerts').innerHTML = ''; return; }
@@ -1137,6 +1189,10 @@ addEventListener('keydown', (e) => {
   const act = byKey.get(k);
   if (!act) return;
   if (k === ' ' || act.id === 'full') e.preventDefault(); // (Space would scroll or press a button)
+  // A key held down repeats: only the sync nudges ([ and ]) take that. Anything else would go
+  // round again (Oct 16: M held a moment too long stopped a recording and started a new one a
+  // second later, which ran on unnoticed for four minutes).
+  if (e.repeat && act.id !== 'later' && act.id !== 'earlier') return;
   act.run();
 });
 
@@ -1156,15 +1212,23 @@ addEventListener('drop', (e) => {
 });
 
 // main.js calls this right after the window loads (as a user gesture, which screen capture needs).
-window.startSystemAudio = () => useSystem().catch((err) => showMenu(`Could not hear your PC's sound (${err?.message || err}). The demo beat, a file or an input still work: pick one below.`));
+window.startSystemAudio = () => useSystem().catch((err) => {
+  const denied = err?.name === 'NotAllowedError' || err?.name === 'NotReadableError';
+  if (onMac() && denied) {
+    showMenu('Could not hear this Mac. In System Settings, Privacy & Security, allow Toaster to record system audio (it is listed as Electron when you run it from source), then quit Toaster and open it again. The demo beat, a file or an input still work.');
+    return;
+  }
+  showMenu(`Could not hear your ${onMac() ? 'Mac' : 'PC'}'s sound (${err?.message || err}). The demo beat, a file or an input still work: pick one below.`);
+});
 
 // For testing from tools/cdp.mjs: lets a script drive the app (e.g. run the demo silently).
-window.__nc = { get artImg() { return artImg; }, eng, state, view, ac, cam, takeover, punch, card, glass, orb, cuts, worlds, tracker, lens, segcam, gestures, setHush, meshFace, openInStrudel, strudelProgram, strudelLink, attach, syncOffset, useDemo, useSystem, useInput, setCalm, setVisual, setBlocks, setOrb, setGlass, toggleLayout, toggleCard, showMenu };
+window.__nc = { get artImg() { return artImg; }, eng, state, view, ac, cam, takeover, punch, card, glass, orb, cuts, worlds, tracker, lens, portal, segcam, gestures, handLog, setHush, meshFace, openInStrudel, strudelProgram, strudelLink, attach, syncOffset, useDemo, useSystem, useInput, setCalm, setVisual, setBlocks, setOrb, setGlass, toggleLayout, toggleCard, showMenu };
 
 // the version, in the menu and the help
 window.nc?.version?.().then((v) => { for (const el of document.querySelectorAll('.ver')) el.textContent = 'v' + v; });
 
 loadSettings();
+$('b-rec').dataset.title = `Record a video of the window, with the sound, into ${onMac() ? 'Movies/Toaster' : 'Videos\\Toaster'}`;
 applyKeys();
 applyTheme();
 setVisual(state.visual);
@@ -1176,6 +1240,7 @@ setGlass(state.glass);
 setCalm(state.calm);
 applyCard();
 // the first time Toaster opens, a word on where to start (it's already listening to the PC)
-if (state.firstRun && window.nc) setTimeout(() => showNotice(`Toaster is listening to whatever your PC plays and writing it as code. ? shows the keys and how it works; ${K('source')} picks another source; ${K('cam')} turns on the camera.`), 2500);
+window.nc?.onFullScreen?.((on) => document.documentElement.classList.toggle('full', !!on));
+if (state.firstRun && window.nc) setTimeout(() => showNotice(`Toaster is listening to whatever your ${onMac() ? 'Mac' : 'PC'} plays and writing it as code. ? shows the keys and how it works; ${K('source')} picks another source; ${K('cam')} turns on the camera.`), 2500);
 requestAnimationFrame(draw);
 if (!window.nc) showMenu('Running outside the desktop app: pick a source.', 'info');
