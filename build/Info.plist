@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.music</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>Toaster listens to whatever this Mac is playing, so it can write it out as code. It uses the sound only.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>Toaster uses the camera for the picture behind the code, the finger frame and the now-playing card. The picture stays on this Mac.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Toaster listens to a microphone or line-in when you pick an audio input.</string>
+</dict>
+</plist>

@@ -15,15 +15,19 @@ transcription. Press X and it hands you the whole song as Strudel code and as a 
 
 ## Get it
 
-Windows 10 or 11, 64-bit. A webcam is optional.
+Windows 10 or 11, or macOS 13 or later. A webcam is optional.
 
-1. Download `Toaster-<version>-win-x64.zip` from the [Releases](../../releases) page.
-2. Unzip it anywhere and double-click `Toaster.exe`.
-3. The first time, Windows may say "Windows protected your PC" (the app isn't signed): click
-   **More info**, then **Run anyway**.
+**Windows.** Download `Toaster-<version>-win-x64.zip` from the [Releases](../../releases) page,
+unzip it anywhere and double-click `Toaster.exe`. The first time, Windows may say "Windows
+protected your PC" (the app isn't signed): click **More info**, then **Run anyway**. It starts
+listening straight away; there's no prompt.
 
-It starts listening to your PC's sound straight away; there's no prompt. Play some music: within a
-few seconds it finds the beat and starts typing. Press **?** for the keys.
+**Mac.** Download the Mac build from the same page, unzip it, and double-click `Toaster`. The
+first time, macOS may say it can't be opened: open **System Settings → Privacy & Security** and
+click **Open Anyway**. It then asks to record system audio. Allow it. That's how Toaster hears
+what's playing; it doesn't record the screen, and the camera stays off until you press C.
+
+Play some music: within a few seconds it finds the beat and starts typing. Press **?** for the keys.
 
 ## Keys
 
@@ -42,9 +46,9 @@ These are the keys as they come; every one can be changed in the help (**?**): c
 | (signs) | with the camera on, hold up a hand sign: ✌️ (two fingers up) for the next theme, 👍 (held a second) to start or stop recording, ✊ (one raised fist; two up, a flex, don't) to hush, 🖐 (an open hand) to come back from it. Each fires once a hold (the header shows the sign while you hold it), and none while the finger frame is open |
 | G | glass: a blob of liquid glass floats over the code and bends it like a lens (after the AIRGLOW visuals by null.mpeg), swelling on the kick |
 | O | open this code in Strudel: your browser opens strudel.cc with the code in its editor (in the link, after the #), ready to play with ctrl+enter and change. The vox line becomes the same notes on a synth (Strudel has no "vox" sample), and a punchcard of the whole thing draws under the code |
-| M | record a video: what's in the window with the sound, into `Videos\Toaster` (see Saving things below). M again to stop |
-| J | drop clips: while on, the first two drops of each song are saved as videos of their own, the build-up and the drop, into `Videos\Toaster` (see Saving things below) |
-| X | export the song so far, decompiled: a MIDI file and the whole song as Strudel code, into `Music\Toaster` (see Saving things below) |
+| M | record a video: what's in the window with the sound, into `Videos\Toaster` on Windows or `Movies/Toaster` on a Mac (see Saving things below). M again to stop |
+| J | drop clips: while on, the first two drops of each song are saved as videos of their own, the build-up and the drop, into that same folder (see Saving things below) |
+| X | export the song so far, decompiled: a MIDI file and the whole song as Strudel code, into `Music\Toaster` on Windows or `Music/Toaster` on a Mac (see Saving things below) |
 | Space | tap the beat: from the fourth tap the tempo is yours, the beats on your taps and the first tap starting a bar. For a song it can't find the beat of (soft songs, rubato) or finds wrong. It stays until the song changes (the hits still fine-tune it), and a pause of 2 seconds starts the count over |
 | Q | hush: every part muted with a `_` in front of its name, the way Strudel's `hush()` stops everything, and the background dimmed (the sound itself keeps playing). Q again, an open hand or a new song brings it back |
 | K | camera effect: none, cut-out (just you over the visuals: where MediaPipe's selfie segmenter finds a person, the rest of the picture goes see-through, and the camera moves up over the backgrounds), slit-scan (each row a moment later than the one above, so anything moving bends down the picture), datamosh (what a video codec does when it loses its key frames: the picture melts along with whatever moves, and comes back fresh on every bar line), windows (the room gone, you only through little windows that pop open wherever you move, each keeping its moment, so moving leaves a trail of them, a burst on each kick, one on your face; after lo.fi.sci.fi's segcam). The first three work on the ASCII camera too, and with it the windows show you as text. Remembered |
@@ -82,31 +86,34 @@ then the caret goes back to fix it.
 
 ## Saving things
 
-- **M** records the window with its sound into `Videos\Toaster`, as an MP4 ready for TikTok,
-  Shorts and Reels. Switch to the vertical layout (L) first for a 1080 x 1920 video; it keeps
-  everything clear of the edges Reels and TikTok trim on tall phones.
+- **M** records the window with its sound into `Videos\Toaster` on Windows, or `Movies/Toaster`
+  on a Mac, as an MP4 ready for TikTok, Shorts and Reels. Switch to the vertical layout (L) first
+  for a 1080 x 1920 video; it keeps everything clear of the edges Reels and TikTok trim on tall phones.
 - **J** turns on drop clips: the first two drops of each song are saved as their own videos (the
-  build-up and the drop) into `Videos\Toaster`.
-- **X** exports the song so far into `Music\Toaster`: a MIDI file (drums, bass, chords and lead on
-  their own tracks) and the whole song as Strudel code, every 4 bars as heard, the different ones
-  named and played in order with `arrange()`. Paste it into strudel.cc and press ctrl+enter.
+  build-up and the drop) into that same folder.
+- **X** exports the song so far into `Music\Toaster` on Windows, or `Music/Toaster` on a Mac: a
+  MIDI file (drums, bass, chords and lead on their own tracks) and the whole song as Strudel code,
+  every 4 bars as heard, the different ones named and played in order with `arrange()`. Paste it
+  into strudel.cc and press ctrl+enter.
 
 More on all three in [docs/how-it-works.md](docs/how-it-works.md).
 
 ## Privacy
 
-Everything Toaster hears and sees stays on your PC. The sound is worked out in the app, and the
-camera (off until you press C) is looked at by Windows' own face detector and by Google's
-MediaPipe, both running on your machine. Nothing is uploaded. It reaches the internet for two
-things only: the JetBrains Mono typeface from Google Fonts when it starts, and strudel.cc when you
-press O (your browser opens it with the code in the link).
+Everything Toaster hears and sees stays on your machine. The sound is worked out in the app, and the
+camera (off until you press C) is looked at by the system's own face detector (Windows' face
+detector, or the Mac's Vision framework) and by Google's MediaPipe, both running on your machine.
+Nothing is uploaded. It reaches the internet for two things only: the JetBrains Mono typeface from
+Google Fonts when it starts, and strudel.cc when you press O (your browser opens it with the code
+in the link).
 
 ## Good to know
 
 - It does best with a steady beat. A song without clear drums can take 8 to 20 seconds to find
   one; tap Space on the beat to give it the tempo.
-- The song's title (and its cover, for the ID card) come from Windows' media controls, so any
-  player that shows up there works: Spotify, browsers and the rest.
+- The song's title (and its cover, for the ID card) come from the system's media controls
+  (Windows' media controls, or the Mac's Now Playing), so any player that shows up there works:
+  Spotify, browsers and the rest.
 - For the finger frame and the hand signs, keep your hands a little inside the camera's picture.
 - What it can and can't hear yet: the end of [docs/how-it-works.md](docs/how-it-works.md).
 
@@ -118,8 +125,12 @@ With Node.js (it's built with Node 24):
 npm install
 npm start          # run it
 npm run dev        # run it with a debugging port (9333) for tools/cdp.mjs and tools/checks.js
-npm run package    # build the app into dist/Toaster-win32-x64
+npm run package    # build for the OS you're on: dist/Toaster-win32-x64, or dist/Toaster-darwin-universal
 ```
+
+On a Mac, `npm start` compiles the Swift helpers (now playing, and faces) the first time, with
+Xcode's command line tools. `npm run package:win` and `npm run package:mac` build the other OS's
+app; the Mac app has to be built on a Mac.
 
 How it works inside, and the test songs it's checked against: [docs/how-it-works.md](docs/how-it-works.md).
 

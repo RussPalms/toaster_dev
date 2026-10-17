@@ -250,6 +250,13 @@ body.mini #card .c-fields { display: block; }
 body.mini.card-on #code { padding: 40px calc(var(--card-w, 160px) + 22px) 10px 14px; }
 body.mini header button:not(#b-mini) { display: none; }
 body.mini header { padding-right: 140px; }
+/* macOS draws the traffic lights in the header's left, and has no caption buttons on the
+   right. Fullscreen hides the lights, so the gap goes with them. */
+.os-mac { display: none; }
+html.darwin .os-mac { display: inline; }
+html.darwin .os-win { display: none; }
+html.darwin header { padding-left: 78px; padding-right: 12px; }
+html.darwin.full header { padding-left: 12px; }
 
 /* ---------- menu ---------- */
 #menu { position: fixed; inset: 0; z-index: 9; display: grid; place-items: center; padding: 16px; background: color-mix(in srgb, var(--bg) 70%, transparent); }

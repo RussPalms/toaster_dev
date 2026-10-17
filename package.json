@@ -2,7 +2,7 @@
   "name": "toaster",
   "productName": "Toaster",
   "version": "0.3.1",
-  "description": "Hears whatever is playing on your PC and writes it out as live Strudel code, with visuals.",
+  "description": "Hears whatever is playing and writes it out as live Strudel code, with visuals.",
   "author": "Colin",
   "license": "MIT",
   "main": "main.js",
@@ -10,7 +10,9 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --remote-debugging-port=9333",
-    "package": "electron-packager . \"Toaster\" --platform=win32 --arch=x64 --out=dist --overwrite --icon=build/icon.ico --asar.unpack=**/helpers/*.ps1 --ignore=^/dist --ignore=^/tools --ignore=^/\\.claude --ignore=^/prototype --ignore=^/docs --ignore=^/[^/]+\\.html$ --ignore=^/[^/]+\\.md$ --ignore=tasks-vision/wasm/vision_wasm_internal --ignore=tasks-vision/wasm/vision_wasm_nosimd_internal --ignore=tasks-vision/.*\\.map$ --ignore=tasks-vision/.*\\.cjs$ --ignore=tasks-vision/vision\\.d\\.ts$"
+    "package": "node tools/package.mjs",
+    "package:mac": "node tools/package.mjs darwin",
+    "package:win": "node tools/package.mjs win32"
   },
   "devDependencies": {
     "@electron/packager": "20.3.0",

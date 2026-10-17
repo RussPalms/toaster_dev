@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+<script src="boot.js"></script>
 <canvas id="cam"></canvas>
 <canvas id="worlds" aria-hidden="true"></canvas>
 <canvas id="worldwords" aria-hidden="true"></canvas>
@@ -31,7 +32,7 @@
   <button id="b-glass" data-act="glass" data-title="Glass blob over the code" title="Glass blob over the code (G)">glass</button>
   <button id="b-card" data-act="card" data-title="Now-playing ID card: off, on, big" title="Now-playing ID card: off, on, big (N)">card</button>
   <button id="b-cam" class="grp" data-act="cam" data-title="Webcam: off, on, big eyes, ASCII" title="Webcam: off, on, big eyes, ASCII (C)">cam</button>
-  <button id="b-rec" class="grp" data-act="rec" data-title="Record a video of the window, with the sound, into Videos\Toaster" title="Record a video of the window, with the sound, into Videos\Toaster (M)">● rec</button>
+  <button id="b-rec" class="grp" data-act="rec" data-title="Record a video of the window, with the sound" title="Record a video of the window, with the sound (M)">● rec</button>
   <button id="b-strudel" data-act="strudel" data-title="Open this code in Strudel, in your browser" title="Open this code in Strudel, in your browser (O)">strudel ↗</button>
   <button id="b-mini" class="grp" data-act="mini" data-title="Mini player: a small window in the corner, over everything else" title="Mini player: a small window in the corner, over everything else (W)">mini</button>
   <button id="b-layout" class="wide-only" data-act="layout" data-title="Vertical layout for TikTok/Shorts" title="Vertical layout for TikTok/Shorts (L)">9:16</button>
@@ -83,7 +84,7 @@
     <h1>toaster <small class="ver"></small></h1>
     <p class="sub">turns whatever's playing into live code</p>
     <div class="opts">
-      <button id="go-system">▶ system audio</button><span>everything playing on this PC (Spotify, YouTube, anything)</span>
+      <button id="go-system">▶ system audio</button><span>everything playing on this <span class="os-win">PC</span><span class="os-mac">Mac</span> (Spotify, YouTube, anything)</span>
       <button id="go-demo">✦ demo beat</button><span>built-in test track</span>
       <button id="go-file">▤ audio file</button><span>or drop a file on the window</span>
       <button id="go-input">◉ audio input</button><span>a mic or line-in</span>
@@ -101,17 +102,17 @@
 
 <dialog id="help">
   <h2>how it works <small class="ver"></small></h2>
-  <p>Toaster listens to whatever your PC is playing and writes it out as Strudel code, the way a live coder performs it: named lines, typed from a blank window, lighting up as they play.</p>
+  <p>Toaster listens to whatever your <span class="os-win">PC</span><span class="os-mac">Mac</span> is playing and writes it out as Strudel code, the way a live coder performs it: named lines, typed from a blank window, lighting up as they play.</p>
   <ul>
     <li><b>Beat:</b> finds kick, clap and hi-hat hits (closed and open, by how long they ring), the tempo and where bars start, and learns which of 16 steps each plays.</li>
     <li><b>Harmony:</b> reads the bass note and chord of each bar and the key. A lead/vocal line becomes <code>vox: s("vox").slice(16, …)</code>, with the note as the slice.</li>
-    <li><b>Song:</b> the title comes from Windows' now-playing info. A new song wipes the screen and starts typing again.</li>
+    <li><b>Song:</b> the title comes from <span class="os-win">Windows' now-playing info</span><span class="os-mac">what the Mac says is playing</span>. A new song wipes the screen and starts typing again.</li>
     <li><b>Drops:</b> when the kick comes back hard after 3+ seconds away, the screen gets taken over: windows pop up on every kick (webcam windows in each theme colour, close-ups of your face and of one eye, your eye on a little computer screen, an XP error box, a little blue screen, Notepad). Or a full blue screen instead. Press <kbd data-k="drop">D</kbd> to fire it any time. Each bar starts with a flash of colour, and it ends on an empty desktop with one alert.</li>
-    <li><b>Camera:</b> the close-ups, big eyes and the finger frame find your face and hands on this PC (Windows' own face detection and Google's MediaPipe); nothing is uploaded.</li>
+    <li><b>Camera:</b> the close-ups, big eyes and the finger frame find your face and hands on this <span class="os-win">PC (Windows' own face detection</span><span class="os-mac">Mac (the Mac's own face detection</span> and Google's MediaPipe); nothing is uploaded.</li>
   </ul>
   <p>Filters sit on sliders that slide when the music's filter moves; pumping chords get .duck() on the kick; the tempo line notes a breakdown or a drop; long lines wrap onto indented rows.</p>
   <p>It's a live reconstruction for show, not an exact transcription. Steady beats work best. What you pick (the background and its strength, theme, orb, blocks, glass, card, camera effect, drop effect, and the keys) is remembered next time; the camera always starts off.</p>
-  <label class="calm"><input type="checkbox" id="calm" /><span><b>Fewer flashes</b>, for anyone sensitive to flashing light: no full-screen flashes or hard cuts (the cuts background changes scene gently, at most once a bar), no colour flashes in a drop, the blue screen fades, kicks don't punch the picture. On from the start if Windows' "Show animations" is off.</span></label>
+  <label class="calm"><input type="checkbox" id="calm" /><span><b>Fewer flashes</b>, for anyone sensitive to flashing light: no full-screen flashes or hard cuts (the cuts background changes scene gently, at most once a bar), no colour flashes in a drop, the blue screen fades, kicks don't punch the picture. On from the start if <span class="os-win">Windows' "Show animations" is off</span><span class="os-mac">the Mac's Reduce motion setting is on</span>.</span></label>
   <table>
     <tr class="sec"><th colspan="2">look</th></tr>
     <tr data-act="visual"><td>V</td><td>background: spectrum, tunnel, spiral (a turn a bar, every hit a mark where it fell), pitch wheel (the twelve notes round a circle: the chord as a shape, the bass and the melody's notes), warp (a feedback shader: stripes in a kaleidoscope, trailing and swirling, punched by the kick), cuts (each drum owns a scene, and every hit cuts to it, each scene Toaster's own view of the song: the drum's word huge, its line of code magnified, its 16 steps as a punchcard, the spectrum falling in dots, the waveform, you or the cover in big dots, the tempo and key, the spectrum as text mirrored like a kaleidoscope, a tunnel of rectangles; it starts bare and builds as the parts come in; after Atsushi Tadokoro's live sets), worlds (a film of planets, after Anthropic's Claude Opus 5.5 launch film: every kick cuts to another world on the same horizon, an extreme close-up of something seen as a planet: honey, agate, lace, a leaf, bread crust, plant cells, oil on water, a circuit board, the code itself; when the kick drops out the film rests on a horizon at dawn till it's back), rain, scope, off</td></tr>
@@ -130,9 +131,9 @@
     <tr data-act="drop"><td>D</td><td>fire the drop effect now (it also fires by itself when the kick comes back after a break)</td></tr>
     <tr data-act="dropfx"><td>B</td><td>drop effect: XP takeover, blue screen, off</td></tr>
     <tr class="sec"><th colspan="2">save &amp; share</th></tr>
-    <tr data-act="rec"><td>M</td><td>record a video of the window with the sound (MP4, into Videos\Toaster); <kbd data-k="rec">M</kbd> again to stop. The header and footer hide while it records. For TikTok or Shorts, switch to the vertical layout (<kbd data-k="layout">L</kbd>) first</td></tr>
-    <tr data-act="clips"><td>J</td><td>drop clips: while on, the first two drops of each song are saved as videos of their own (the 6 to 16 seconds before each and 10 after), into Videos\Toaster, ready to post. Works alongside <kbd data-k="rec">M</kbd></td></tr>
-    <tr data-act="export"><td>X</td><td>export the song so far, decompiled: a MIDI file (drums, bass, chords and lead on their own tracks) and the whole song as Strudel code (every 4 bars as heard, the different ones named, played in order with arrange()), into Music\Toaster</td></tr>
+    <tr data-act="rec"><td>M</td><td>record a video of the window with the sound (MP4, into <span class="os-win">Videos\Toaster</span><span class="os-mac">Movies/Toaster</span>); <kbd data-k="rec">M</kbd> again to stop. The header and footer hide while it records. For TikTok or Shorts, switch to the vertical layout (<kbd data-k="layout">L</kbd>) first</td></tr>
+    <tr data-act="clips"><td>J</td><td>drop clips: while on, the first two drops of each song are saved as videos of their own (the 6 to 16 seconds before each and 10 after), into <span class="os-win">Videos\Toaster</span><span class="os-mac">Movies/Toaster</span>, ready to post. Works alongside <kbd data-k="rec">M</kbd></td></tr>
+    <tr data-act="export"><td>X</td><td>export the song so far, decompiled: a MIDI file (drums, bass, chords and lead on their own tracks) and the whole song as Strudel code (every 4 bars as heard, the different ones named, played in order with arrange()), into <span class="os-win">Music\Toaster</span><span class="os-mac">Music/Toaster</span></td></tr>
     <tr data-act="strudel"><td>O</td><td>open this code in Strudel (strudel.cc) in your browser, to play it and change it</td></tr>
     <tr class="sec"><th colspan="2">window</th></tr>
     <tr data-act="layout"><td>L</td><td>vertical layout for TikTok/Shorts (resizes the window)</td></tr>
@@ -153,7 +154,7 @@
   <form method="dialog" id="rename-form">
     <input id="rename-artist" placeholder="artist" autocomplete="off" />
     <input id="rename-title" placeholder="title" autocomplete="off" />
-    <p class="tip">Leave both empty to go back to what Windows reports.</p>
+    <p class="tip">Leave both empty to go back to what <span class="os-win">Windows</span><span class="os-mac">the Mac</span> reports.</p>
     <button value="ok">ok</button>
   </form>
 </dialog>

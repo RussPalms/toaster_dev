@@ -1,10 +1,12 @@
-// Toaster: main process. Opens the window, hands the page your PC's audio without a share
-// prompt, reports what Windows says is playing, and answers questions about the machine.
+// Toaster: main process. Opens the window, hands the page the machine's audio without a
+// share prompt, reports what the system says is playing, and answers questions about the machine.
 const { app, BrowserWindow, desktopCapturer, ipcMain, screen, session, shell } = require('electron');
 const path = require('node:path');
 const os = require('node:os');
 const fs = require('node:fs');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
+
+const mac = process.platform === 'darwin';
 
 // Run from source (npm start, npm run dev, the checks), it keeps its settings in a folder of its
 // own, so trying things out never changes the installed app's.
@@ -43,6 +45,11 @@ let miniFrom = null, miniBounds = null; // the window before the mini player, an
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 
 function createWindow() {
+  // Windows draws its caption buttons on the right (the overlay). macOS draws the traffic
+  // lights on the left; the page leaves them a gap (see renderer/boot.js).
+  const frame = mac
+    ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 11 } }
+    : { titleBarStyle: 'hidden', titleBarOverlay: { color: '#051db5', symbolColor: '#ffffff', height: 36 } };
   win = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -51,9 +58,8 @@ function createWindow() {
     title: 'Toaster',
     backgroundColor: '#051db5',
     autoHideMenuBar: true,
-    titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#051db5', symbolColor: '#ffffff', height: 36 },
-    icon: path.join(__dirname, 'build', 'icon.ico'),
+    ...frame,
+    icon: path.join(__dirname, 'build', mac ? 'icon.png' : 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -82,6 +88,9 @@ function createWindow() {
   // drawing (but keeps listening) while nobody can see it.
   win.on('minimize', () => win.webContents.send('win:shown', false));
   win.on('restore', () => win.webContents.send('win:shown', true));
+  // Fullscreen hides the traffic lights, so the page can use that left gap.
+  win.on('enter-full-screen', () => win.webContents.send('win:full', true));
+  win.on('leave-full-screen', () => win.webContents.send('win:full', false));
   win.webContents.on('did-finish-load', () => {
     if (lastNowPlaying) win.webContents.send('nowplaying', lastNowPlaying);
     // Start listening right away. Screen/audio capture needs a user gesture, and running this
@@ -90,11 +99,17 @@ function createWindow() {
   });
 }
 
-// The page asks for "screen + audio"; we answer with the main screen and Windows loopback audio,
-// which is everything your speakers are playing. No picker, no "sharing your screen" bar.
+// The page asks for the machine's audio; we hand it over with no picker and no "sharing
+// your screen" bar. Windows loopback rides on a screen source. macOS hears the mix through
+// a Core Audio tap (audio only): a screen source would be a Screen Recording prompt for a
+// picture Toaster never uses.
 function setUpCapture() {
   session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
     try {
+      if (mac) {
+        callback({ audio: 'loopback' });
+        return;
+      }
       const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
       callback({ video: sources[0], audio: 'loopback' });
     } catch (err) {
@@ -108,11 +123,46 @@ function setUpCapture() {
   session.defaultSession.setPermissionCheckHandler((_wc, permission) => allowed.has(permission));
 }
 
-function startNowPlaying() {
-  const script = path.join(__dirname, 'helpers', 'nowplaying.ps1').replace('app.asar', 'app.asar.unpacked');
-  nowPlayingProc = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], {
-    windowsHide: true,
+// Windows: helpers/*.ps1. Mac: helpers/mac/bin, compiled Swift (see helpers/mac/build.sh).
+// Same protocol either way: JSON lines on stdout, and for faces a grey frame per line on stdin.
+function spawnHelper(name) {
+  let file;
+  let cmd;
+  let args;
+  const opts = {};
+  if (process.platform === 'win32') {
+    file = path.join(__dirname, 'helpers', `${name}.ps1`).replace('app.asar', 'app.asar.unpacked');
+    cmd = 'powershell.exe';
+    args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', file];
+    opts.windowsHide = true;
+  } else if (mac) {
+    file = path.join(__dirname, 'helpers', 'mac', 'bin', name).replace('app.asar', 'app.asar.unpacked');
+    cmd = file;
+    args = [];
+  } else {
+    return null;
+  }
+  if (!fs.existsSync(file)) return null;
+  const proc = spawn(cmd, args, opts);
+  proc.stderr?.setEncoding('utf8');
+  proc.stderr?.on('data', (chunk) => {
+    const line = String(chunk).trim();
+    if (line) console.error(`${name}: ${line}`);
   });
+  return proc;
+}
+
+// From source on a Mac, compile the helpers if the Swift changed. A packaged app already
+// carries the binaries (and the person running it doesn't have a compiler).
+function ensureMacHelpers() {
+  if (!mac || app.isPackaged) return;
+  const result = spawnSync('bash', [path.join(__dirname, 'helpers', 'mac', 'build.sh')], { encoding: 'utf8' });
+  if (result.status !== 0) console.error(result.stderr || result.stdout || 'could not compile the mac helpers');
+}
+
+function startNowPlaying() {
+  nowPlayingProc = spawnHelper('nowplaying');
+  if (!nowPlayingProc) return;
   let buffer = '';
   nowPlayingProc.stdout.setEncoding('utf8');
   nowPlayingProc.stdout.on('data', (chunk) => {
@@ -131,13 +181,14 @@ function startNowPlaying() {
   nowPlayingProc.on('error', () => { nowPlayingProc = null; });
 }
 
-// Face finding for the camera pop-ups that close in on your face and eyes: helpers/faces.ps1 runs
-// Windows' own face detector while the camera is on. Small grey frames go in on stdin, one line
-// each, and a line of face boxes comes back for each. Nothing leaves the PC.
+// Face finding for the camera pop-ups that close in on your face and eyes. The helper runs
+// the system's own face detector (Windows.Media, or Vision on the Mac) while the camera is
+// on. Small grey frames go in on stdin, one line each, and a line of face boxes comes back
+// for each. Nothing leaves the machine.
 let faceProc = null, faceWaiting = [], faceBuffer = '';
 function startFaces() {
-  const script = path.join(__dirname, 'helpers', 'faces.ps1').replace('app.asar', 'app.asar.unpacked');
-  const proc = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], { windowsHide: true });
+  const proc = spawnHelper('faces');
+  if (!proc) return;
   faceProc = proc;
   faceBuffer = '';
   proc.stdout.setEncoding('utf8');
@@ -334,6 +385,8 @@ function endRecording() {
 
 app.whenReady().then(() => {
   if (!first) return;
+  if (mac) app.dock?.setIcon(path.join(__dirname, 'build', 'icon.png'));
+  ensureMacHelpers();
   setUpCapture();
   setUpIpc();
   createWindow();
